@@ -4,6 +4,7 @@ import os
 import random
 import sys
 import time
+import traceback
 import uuid
 
 class Task:
@@ -33,8 +34,6 @@ class Task:
             except Exception as e:
                 Utils.debug(f"Task error: {e}")
             self.last_run_time = time.time() * 1000
-
-
 class TaskScheduler:
     """任务调度器类，用于管理所有定时器任务"""
     def __init__(self):
@@ -70,7 +69,6 @@ class TaskScheduler:
         """清除所有任务"""
         self.tasks.clear()
 
-
 # 创建全局任务调度器实例
 global_task_scheduler = TaskScheduler()
 
@@ -100,7 +98,6 @@ def runTaskLater(func, delayMs):
     task = Task(one_time_func, delayMs)
     # 添加到调度器
     return global_task_scheduler.add_task(task)
-
 
 def runTaskTimer(func, delayMs=0, periodMs=10):
     """全局函数，创建并启动一个定时任务
@@ -165,6 +162,10 @@ GAME_STATE_GAMEOVER = 'gameover'
 SHOOT_TYPE_DIRECT = 'direct'  # 直射
 SHOOT_TYPE_SCATTER = 'scatter'  # 散射
 SHOOT_TYPE_RAPID = 'rapid'  # 连射
+
+# 子弹所有者常量
+BULLET_OWNER_PLAYER = 'player'  # 玩家子弹
+BULLET_OWNER_ENEMY = 'enemy'    # 敌人子弹
 
 # UI状态常量
 UI_SETTINGS_ACTIVE = 'settings_active'
@@ -234,6 +235,19 @@ COLOR_BUTTON_RED = (220, 60, 60)
 COLOR_BUTTON_GREEN = (60, 180, 80)
 COLOR_BUTTON_CONFIRM = (0, 120, 0)
 COLOR_BUTTON_CANCEL = (120, 0, 0)
+
+# 半透明和额外颜色定义
+COLOR_BLUE_BUTTON = (0, 120, 255)
+COLOR_NAVY_BLUE = (16, 16, 32)
+COLOR_DARK_BLUE = (0, 120, 255)
+COLOR_DARK_RED_TEXT = (128, 0, 0)
+COLOR_ORANGE = (255, 165, 0)
+COLOR_LIGHT_BLUE_TRANSPARENT = (100, 180, 255, 128)
+COLOR_BLACK_TRANSPARENT = (0, 0, 0, 128)
+COLOR_BLUE_OVERLAY = (60, 80, 120, 240)
+COLOR_LIGHT_GRAY_BACKGROUND = (240, 240, 240, 255)
+COLOR_WHITE_TRANSPARENT_240 = (255, 255, 255, 240)
+COLOR_WHITE_TRANSPARENT_255 = (255, 255, 255, 255)
 
 MAX_PLAYER_HEALTH = 5000
 
@@ -342,7 +356,7 @@ class Utils:
         if sound:
             try:
         
-                if game and game.ui_manager and hasattr(game.ui_manager, 'volume_settings'):
+                if game and game.ui_manager:
                     sound_volume = game.ui_manager.volume_settings['sound']['value'] / 100
                     master_volume = game.ui_manager.volume_settings['master']['value'] / 100
                     # 应用主音量和音效音量的乘积
@@ -403,8 +417,6 @@ class Utils:
                 return str(num)
             # 对于浮点数保留两位小数
             return f"{num:.2f}"
-
-
 # 游戏对象类
 class Bullet:
     """子弹类"""
@@ -445,12 +457,12 @@ class Bullet:
         # 子弹超出屏幕则标记为不活跃
         # 散射子弹直接销毁，不进行反射
         if self.shoot_type == SHOOT_TYPE_SCATTER:
-            if (self.owner == 'player' and (self.y < -self.h or self.x < -self.w or self.x > SCREEN_W)) or \
-               (self.owner == 'enemy' and (self.y > SCREEN_H or self.x < -self.w or self.x > SCREEN_W)):
+            if (self.owner == BULLET_OWNER_PLAYER and (self.y < -self.h or self.x < -self.w or self.x > SCREEN_W)) or \
+               (self.owner == BULLET_OWNER_ENEMY and (self.y > SCREEN_H or self.x < -self.w or self.x > SCREEN_W)):
                 self.alive = False
         else:
             # 直射和连射子弹的屏幕边缘检测
-            if (self.owner == 'player' and self.y < -self.h) or (self.owner == 'enemy' and self.y > SCREEN_H):
+            if (self.owner == BULLET_OWNER_PLAYER and self.y < -self.h) or (self.owner == BULLET_OWNER_ENEMY and self.y > SCREEN_H):
                 self.alive = False
 
     def draw(self, surf):
@@ -467,7 +479,7 @@ class Bullet:
                 # 没有角度，直接绘制原图
                 surf.blit(self.image, (self.x, self.y))
         else:
-            color = (255, 220, 60) if self.owner == 'player' else (255, 80, 80)
+            color = (255, 220, 60) if self.owner == BULLET_OWNER_PLAYER else (255, 80, 80)
             pygame.draw.rect(surf, color, self.rect)
         
         # 显示详细信息
@@ -491,8 +503,6 @@ class Bullet:
         # 更新rect位置
         self.rect.x = self.x
         self.rect.y = self.y
-
-
 class Player:
     """玩家飞机类"""
     def __init__(self, x, y, image=None):
@@ -549,8 +559,7 @@ class Player:
                     bullets = self.shoot(game=game)
                     if bullets and game:
                         for bullet in bullets:
-                            # 使用create_bullet方法创建子弹，确保设置了图片
-                            new_b = game.create_bullet('player', bullet.x, bullet.y, bullet.vy)
+                            new_b = game.create_bullet(BULLET_OWNER_PLAYER, bullet.x, bullet.y, bullet.vy)
                             # 复制子弹的射击类型和角度属性，确保散射状态下正确发射散射子弹
                             new_b.shoot_type = bullet.shoot_type
                             new_b.angle = bullet.angle
@@ -587,7 +596,7 @@ class Player:
                 by = self.y - 8
                 
                 # 创建单个子弹
-                new_b = game.create_bullet('player', center_x, by, -600)
+                new_b = game.create_bullet(BULLET_OWNER_PLAYER, center_x, by, -600)
         
                 new_b.shoot_type = SHOOT_TYPE_RAPID
                 new_b.angle = 0
@@ -630,7 +639,7 @@ class Player:
             
             for i in range(bullet_count):
                 bx = start_x + i * spacing
-                bullets.append(Bullet(bx, by, vy=-600, owner='player', shoot_type=SHOOT_TYPE_DIRECT, angle=0))
+                bullets.append(Bullet(bx, by, vy=-600, owner=BULLET_OWNER_PLAYER, shoot_type=SHOOT_TYPE_DIRECT, angle=0))
                 
         elif self.current_shoot_type == SHOOT_TYPE_SCATTER:
             # 根据游戏阶段决定子弹数量
@@ -672,11 +681,11 @@ class Player:
                 
                 bx = center_x + offset_x
 
-                bullet = Bullet(bx, by, vy=-600, owner='player', shoot_type=SHOOT_TYPE_SCATTER, angle=angle)
+                bullet = Bullet(bx, by, vy=-600, owner=BULLET_OWNER_PLAYER, shoot_type=SHOOT_TYPE_SCATTER, angle=angle)
                 bullets.append(bullet)
                 
         elif self.current_shoot_type == SHOOT_TYPE_RAPID:
-            bullets.append(Bullet(center_x, by, vy=-600, owner='player', shoot_type=SHOOT_TYPE_RAPID, angle=0))
+            bullets.append(Bullet(center_x, by, vy=-600, owner=BULLET_OWNER_PLAYER, shoot_type=SHOOT_TYPE_RAPID, angle=0))
             self.rapid_shot_counter = 0
         
         return bullets
@@ -755,8 +764,6 @@ class Player:
             text_x = self.x + self.w + 5
             text_y = self.y + (self.object_id % 4 * 8 - 8)
             surf.blit(text_surf, (text_x, text_y))
-
-
 class RandomEvent:
     """随机事件实体类"""
     def __init__(self, x, y):
@@ -864,7 +871,6 @@ class PowerUp:
     def update(self, dt):
         # 移动道具
         self.y += self.vy * dt
-        
 
         self.rect.topleft = (self.x, self.y)
         
@@ -894,8 +900,7 @@ class PowerUp:
             radius = 16 + (32 - 16) * self.effect_progress
             # 计算透明度（从255到0，确保逐渐变浅）
             alpha = 255 * (1 - self.effect_progress)
-            
-    
+
             temp_surf = pygame.Surface((int(radius * 2), int(radius * 2)), pygame.SRCALPHA)
             # 绘制绿色圆环，确保颜色是透明的
             pygame.draw.circle(temp_surf, (0, 255, 0, int(alpha)), (int(radius), int(radius)), int(radius), 2)
@@ -908,8 +913,6 @@ class PowerUp:
     def use(self, player, game):
         """抽象方法，由子类实现"""
         raise NotImplementedError("子类必须实现use方法")
-
-
 class SpeedPowerUp(PowerUp):
     """加速道具类"""
     def __init__(self, x, y, image=None):
@@ -925,7 +928,6 @@ class SpeedPowerUp(PowerUp):
         
         # 提升速度
         player.speed *= 2
-        
 
         def restore_speed():
             player.speed = original_speed
@@ -933,8 +935,6 @@ class SpeedPowerUp(PowerUp):
         task = runTaskLater(restore_speed, 15000)
 
         return task
-
-
 class Shield:
     """护盾类，管理护盾的状态和碰撞逻辑"""
     def __init__(self, player, game):
@@ -955,7 +955,6 @@ class Shield:
     def draw(self, surf):
         if not self.active:
             return
-        
 
         temp_surf = pygame.Surface((int(self.radius * 2), int(self.radius * 2)), pygame.SRCALPHA)
         # 绘制淡蓝色圆形滤镜
@@ -1000,8 +999,6 @@ class Shield:
     def add_shield_value(self, value):
         """增加护盾值"""
         self.shield_value += value
-
-
 class ShieldPowerUp(PowerUp):
     """护盾道具类"""
     def __init__(self, x, y, image=None):
@@ -1019,11 +1016,8 @@ class ShieldPowerUp(PowerUp):
         else:
             # 增加护盾值
             player.shield.add_shield_value(30)
-        
 
         return None
-
-
 class HealPowerUp(PowerUp):
     """加血道具类"""
     def __init__(self, x, y, image=None):
@@ -1036,11 +1030,8 @@ class HealPowerUp(PowerUp):
         """使用加血道具：增加玩家600点生命值"""
         # 增加玩家生命值
         player.health = min(MAX_PLAYER_HEALTH, player.health + 600)
-        
 
         return None
-
-
 class SuperRapidShootPowerUp(PowerUp):
     """连发道具类"""
     def __init__(self, x, y, image=None):
@@ -1059,7 +1050,6 @@ class SuperRapidShootPowerUp(PowerUp):
         player.current_shoot_type = SHOOT_TYPE_RAPID
         player.rapid_shots_per_second = 40  # 极高射速
         game.allow_switch_shoot_type = False
-        
 
         def restore_shoot_settings():
             player.current_shoot_type = original_shoot_type
@@ -1069,8 +1059,6 @@ class SuperRapidShootPowerUp(PowerUp):
         task = runTaskLater(restore_shoot_settings, 15000)
         
         return task
-
-
 class SuperScatterShootPowerUp(PowerUp):
     """穿透道具类"""
     def __init__(self, x, y, image=None):
@@ -1087,35 +1075,21 @@ class SuperScatterShootPowerUp(PowerUp):
         # 修改为散射模式
         player.current_shoot_type = SHOOT_TYPE_SCATTER
         
-        # 保存原始的create_bullet方法
-        original_create_bullet = game.create_bullet
-        
-        # 替换create_bullet方法以添加穿透属性
-        def enhanced_create_bullet(owner, x, y, vy):
-            bullet = original_create_bullet(owner, x, y, vy)
-    
-            if owner == 'player':
-                bullet.piercing = True
-            return bullet
-        
-        game.create_bullet = enhanced_create_bullet
+        game.bullets_piercing = True
         game.allow_switch_shoot_type = False
-        
 
         def restore_shoot_settings():
             player.current_shoot_type = original_shoot_type
             # 恢复原始的create_bullet方法
-            game.create_bullet = original_create_bullet
+            game.bullets_piercing = False
             game.allow_switch_shoot_type = True
         
         task = runTaskLater(restore_shoot_settings, 15000)
         
         return task
-
-
 class Enemy:
     """敌方飞机类"""
-    def __init__(self, x, y, vy=100, vx=0, hp=100, score=100, image=None, stage=1):
+    def __init__(self, x, y, game, vy=100, vx=0, hp=100, score=100, image=None, stage=1):
         global object_id
         self.x = x
         self.y = y
@@ -1127,6 +1101,7 @@ class Enemy:
         self.hp = hp
         self.score = score
         self.stage = stage  # 使用传入的stage参数
+        self.game = game
 
         self.img = image if image else Utils.make_pixel_sprite(10, 10, (255, 80, 80), scale=3)
         self.w = self.img.get_width()
@@ -1174,15 +1149,14 @@ class Enemy:
             
             for i in range(bullet_count):
                 bx = start_x + i * spacing
-                bullets.append(Bullet(bx, by, vy=300, owner='enemy', shoot_type=SHOOT_TYPE_DIRECT, angle=0))
+                bullets.append(Bullet(bx, by, vy=300, owner=BULLET_OWNER_ENEMY, shoot_type=SHOOT_TYPE_DIRECT, angle=0))
                 
         elif self.current_shoot_type == SHOOT_TYPE_SCATTER:
             # 散射模式：使用stage作为子弹数量
             bullet_count = self.stage
             
             angles = []
-            
-    
+
             if bullet_count % 2 == 1:  # 奇数子弹
                 # 包含正前方的0度
                 if bullet_count == 1:
@@ -1214,24 +1188,21 @@ class Enemy:
                 offset_x = math.sin(radians) * radius
                 
                 bx = center_x + offset_x
-                
-        
-                bullet = Bullet(bx, by, vy=300, owner='enemy', shoot_type=SHOOT_TYPE_SCATTER, angle=angle)
+
+                bullet = Bullet(bx, by, vy=300, owner=BULLET_OWNER_ENEMY, shoot_type=SHOOT_TYPE_SCATTER, angle=angle)
                 bullets.append(bullet)
                 
         elif self.current_shoot_type == SHOOT_TYPE_RAPID:
             # 连射模式：使用stage作为子弹数量
             bullet_count = self.stage
-            
-    
+
             spacing = 10  # 子弹间隔
             start_x = center_x - ((bullet_count - 1) * spacing) // 2
             
             for i in range(bullet_count):
                 bx = start_x + i * spacing
-                bullets.append(Bullet(bx, by, vy=300, owner='enemy', shoot_type=SHOOT_TYPE_RAPID, angle=0))
-            
-    
+                bullets.append(Bullet(bx, by, vy=300, owner=BULLET_OWNER_ENEMY, shoot_type=SHOOT_TYPE_RAPID, angle=0))
+
             self.rapid_shot_counter = 1.0 / self.rapid_shots_per_second
         
         # 重置射击计时器
@@ -1243,7 +1214,7 @@ class Enemy:
     def update(self, dt):
         """更新位置并可能返回敌方子弹列表"""
         # 检查是否有飓风效果
-        if hasattr(self, 'game') and self.game.hurricane_active:
+        if self.game.hurricane_active:
             # 随机改变方向
             if random.random() > 0.5:
                 self.vx = self.original_vx * 1.5 * (1 if random.random() > 0.5 else -1)
@@ -1260,29 +1231,18 @@ class Enemy:
         # 确保敌人在屏幕内或附近
         if self.x < -50 or self.x > SCREEN_W + 50:
             self.vx = -self.vx  # 反弹
-        
 
         self.time_since_shot += dt
         
         bullets = []
-        
-        # 确定当前关卡
-        if hasattr(self, 'game') and hasattr(self.game, 'stage'):
-            stage = self.game.stage
-        else:
-            stage = self.stage
-            
-        # 保存stage属性供shoot方法使用
-        self.stage = stage
-            
 
-        if stage <= 2:
+        if self.stage <= 2:
             # stage 1-2: 只能直射
             self.current_shoot_type = SHOOT_TYPE_DIRECT
-        elif stage == 3:
+        elif self.stage == 3:
             # stage 3: 可以直射或散射，各50%概率
             self.current_shoot_type = random.choice([SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER])
-        elif stage == 4:
+        elif self.stage == 4:
             # stage 4: 可以直射、散射或连射，各33.3%概率
             self.current_shoot_type = random.choice([SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER, SHOOT_TYPE_RAPID])
         
@@ -1297,8 +1257,6 @@ class Enemy:
 
     def draw(self, surf):
         surf.blit(self.img, (self.x, self.y))
-
-
 class FloatingText:
     """浮动文字效果类"""
     def __init__(self, x, y, text, color, duration=1.0, rise_speed=40):
@@ -1331,8 +1289,6 @@ class FloatingText:
         text = font.render(self.text, True, color)
         text.set_alpha(self.alpha)
         surf.blit(text, (self.x, self.y))
-
-
 class Explosion:
     """爆炸效果类"""
     def __init__(self, x, y, duration=0.4, max_radius=28):
@@ -1359,8 +1315,6 @@ class Explosion:
                 max(0, int(80 * (1 - t)))
             )
             pygame.draw.circle(surf, color, (int(self.x), int(self.y)), r)
-
-
 class UIManager:
     """UI管理器类"""
     def __init__(self, game):
@@ -1373,7 +1327,6 @@ class UIManager:
         self.master_volume = 1.0  # 新增主音量属性
         # 右上角文本管理系统
         self.top_right_texts = []  # 存储右上角显示的文本项
-        
 
         self.modal_active = False
         self.modal_progress = 0.0
@@ -1381,31 +1334,34 @@ class UIManager:
         self.modal_hover = {'confirm': False, 'continue': False}
         self.modal_type = None  # 'restart' or 'return_title' 或 None
         self.gameover_progress = 0.0
-        self.close_button_rect = None  # 关闭按钮位置
+        self.tutorial_active = False
+        self.close_button_rect = None 
+        self._input_confirm_btn = None
+        self._input_cancel_btn = None
         
         # 标题界面按钮
         self.title_buttons = {
             'start': {
                 'rect': pygame.Rect(SCREEN_W // 2 - 120, 400, 240, 50),
-                'color': (255, 215, 0),  # 金色
+                'color': COLOR_GOLD,  # 金色
                 'text': '开始游戏',
                 'hover': False
             },
             'settings': {
                 'rect': pygame.Rect(SCREEN_W // 2 - 120, 470, 240, 50),
-                'color': (0, 120, 255),  # 蓝色
+                'color': COLOR_BLUE_BUTTON,  # 蓝色
                 'text': '设置',
                 'hover': False
             },
             'tutorial': {
                 'rect': pygame.Rect(SCREEN_W // 2 - 120, 540, 240, 50),
-                'color': (40, 180, 40),  # 绿色
+                'color': COLOR_DARK_GREEN,  # 绿色
                 'text': '教程',
                 'hover': False
             },
             'statistics': {
                 'rect': pygame.Rect(SCREEN_W // 2 - 120, 610, 240, 50),
-                'color': (0, 255, 255),  # 青色
+                'color': COLOR_CYAN,  # 青色
                 'text': '统计',
                 'hover': False
             }
@@ -1413,7 +1369,6 @@ class UIManager:
         
         # 统计界面状态
         self.stats_active = False
-        
 
         self.settings_active = False
         self.settings_progress = 0.0
@@ -1422,7 +1377,6 @@ class UIManager:
         self.active_key_binding = None
         # 关闭按钮位置
         self.close_button_rect = pygame.Rect(340, 20, 40, 40)
-        
 
         self.volume_settings = {
             'master': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 100, 200, 20), 'dragging': False},
@@ -1436,7 +1390,6 @@ class UIManager:
         self.input_value = ""
         self.input_cursor_visible = True
         self.input_cursor_timer = 0
-        
 
         self.key_bindings = {
             "up": {'key': pygame.K_w, 'text': 'W', 'rect': pygame.Rect(260, 280, 80, 40), 'default_key': pygame.K_w, 'default_text': 'W'},
@@ -1474,7 +1427,6 @@ class UIManager:
             "shoot_switch": {'text': '射击模式切换', 'rect': pygame.Rect(50, 630, 120, 40)},
             'show_stats': {'text': '打开统计', 'rect': pygame.Rect(50, 680, 120, 40)}
         }
-        
 
         self.title_logo = Utils.load_image('logo', (120, 120))
     
@@ -1544,8 +1496,6 @@ class UIManager:
         # 绘制浮动文本效果
         for ft in self.game.floating_texts:
             ft.draw(screen, self.font)
-
-
         self.update_top_right_texts()
         
         # 绘制所有右上角文本，从上到下排列
@@ -1583,7 +1533,6 @@ class UIManager:
                 # 悬停时稍微变亮
                 color = tuple(min(255, c + 30) for c in color)
 
-    
             btn_surf = pygame.Surface((btn_info['rect'].width, btn_info['rect'].height), pygame.SRCALPHA)
 
             # 在临时surface上绘制圆角矩形
@@ -1605,11 +1554,7 @@ class UIManager:
         settings_h = 650
         settings_x = SCREEN_W // 2 - settings_w // 2
         settings_y = SCREEN_H // 2 - settings_h // 2
-
-
         p = max(0.0, min(1.0, self.settings_progress))
-
-
         try:
             snap = screen.copy()
             small = pygame.transform.smoothscale(snap, (SCREEN_W // 4, SCREEN_H // 4))
@@ -1622,8 +1567,6 @@ class UIManager:
             overlay.fill(COLOR_BLACK)
             overlay.set_alpha(int(160 * p))
             screen.blit(overlay, (0, 0))
-
-
         window_surf = pygame.Surface((settings_w, settings_h), pygame.SRCALPHA)
         window_color = (100, 150, 255, int(240 * p))
         pygame.draw.rect(window_surf, window_color, window_surf.get_rect(), border_radius=20)
@@ -1705,8 +1648,7 @@ class UIManager:
             # 检查是否有重复按键
             is_duplicate = self._check_key_duplicate(key_name)
             color = (255, 255, 0, int(240 * p)) if is_duplicate else active_color if self.input_active and self.active_key_binding == key_name else key_color
-            
-    
+
             text = self.font.render(key_info['text'], True, COLOR_BLACK)
             text_width = text.get_width()
             
@@ -1748,7 +1690,6 @@ class UIManager:
         """绘制数字输入界面"""
         if not self.number_input_active or not self.active_volume:
             return
-            
 
         input_w = 280
         input_h = 120
@@ -1831,7 +1772,6 @@ class UIManager:
         # 逐步增加 modal_progress (0..1)
         self.modal_progress += dt * self.modal_fade_speed
         p = max(0.0, min(1.0, self.modal_progress))
-        
 
         Utils.draw_blurred_background(screen, int(200 * p))
 
@@ -1984,8 +1924,7 @@ class UIManager:
                     new_value = round(raw_value / 2) * 2
                     vol_info['value'] = max(0, min(100, new_value))
                     vol_info['dragging'] = True
-                    
-            
+
                     if vol_name == 'music' or vol_name == 'master':
                         # 计算最终音乐音量 = 主音量 x 音乐音量
                         master_val = self.volume_settings['master']['value'] / 100
@@ -2018,8 +1957,7 @@ class UIManager:
                         self.key_bindings[key_name]['key'] = self.key_bindings[key_name]['default_key']
                         self.key_bindings[key_name]['text'] = self.key_bindings[key_name]['default_text']
                         # 播放点击音效
-                        if hasattr(self.game, 'snd_ui_click'):  # 保留此检查，因为声音资源可能未加载
-                            Utils.play_sound(self.game.snd_ui_click, self.game)
+                        Utils.play_sound(self.game.snd_ui_click, self.game)
                         return True
                     # 检查按键显示区域点击
                     if key_rect.collidepoint(pos) or \
@@ -2053,9 +1991,7 @@ class UIManager:
             # 关闭统计界面时恢复游戏运行
             self.game.paused = False
             return True
-        
-        
-        
+
         return False
     
     def draw_statistics(self, screen, statistics):
@@ -2135,6 +2071,120 @@ class UIManager:
         # 将窗口绘制到屏幕上
         screen.blit(window_surf, (window_x, window_y))
     
+    def draw_tutorial(self, screen):
+        """绘制教程界面"""
+        if not self.tutorial_active:
+            return
+        
+        # 绘制半透明背景
+        overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        screen.blit(overlay, (0, 0))
+        
+        # 窗口尺寸
+        window_width = int(SCREEN_W * 0.85)
+        window_height = int(SCREEN_H * 0.8)
+        window_x = (SCREEN_W - window_width) // 2
+        window_y = (SCREEN_H - window_height) // 2
+        
+        # 创建窗口表面
+        window_surf = pygame.Surface((window_width, window_height), pygame.SRCALPHA)
+        window_surf.fill((240, 240, 240, 255))
+        pygame.draw.rect(window_surf, (0, 0, 0, 255), (0, 0, window_width, window_height), 3)
+        
+        # 绘制关闭按钮
+        close_btn_size = 40
+        close_btn_rect = pygame.Rect(window_width - close_btn_size - 20, 20, close_btn_size, close_btn_size)
+        pygame.draw.circle(window_surf, COLOR_RED, close_btn_rect.center, close_btn_size // 2)
+        close_font = Utils.load_font(FONT_CANDIDATES, 24, bold=True)
+        close_surf = close_font.render('×', True, COLOR_WHITE)
+        close_text_rect = close_surf.get_rect(center=close_btn_rect.center)
+        window_surf.blit(close_surf, close_text_rect)
+        self.close_button_rect = close_btn_rect
+        
+        # 标题字体（减小字体大小）
+        title_font = Utils.load_font(FONT_CANDIDATES, 24)
+        # 正文字体（减小字体大小）
+        content_font = Utils.load_font(FONT_CANDIDATES, 16)
+        # 小标题字体（减小字体大小）
+        subtitle_font = Utils.load_font(FONT_CANDIDATES, 18)
+        
+        # 标题
+        title_surf = title_font.render('游戏教程', True, COLOR_BLACK)
+        title_rect = title_surf.get_rect(center=(window_width // 2, 40))
+        window_surf.blit(title_surf, title_rect)
+        
+        # 绘制内容
+        y_pos = 100
+        line_height = 30
+        
+        # 背景故事
+        story_title = subtitle_font.render('背景故事', True, COLOR_DARK_RED_TEXT)
+        window_surf.blit(story_title, (40, y_pos))
+        y_pos += 40
+        
+        story_lines = [
+            '在不久的将来,世界陷入了资源争夺的紧张局势',
+            'A市为了获取资源,对我们的家园B市发动了袭击',
+            '作为B市最优秀的飞行员,你必须驾驶战机保卫家园',
+            '击退A市的入侵部队,守护我们的和平与自由!'
+        ]
+        
+        for line in story_lines:
+            text_surf = content_font.render(line, True, COLOR_BLACK)
+            window_surf.blit(text_surf, (40, y_pos))
+            y_pos += line_height
+        
+        y_pos += 20
+        
+        # 按键操作
+        control_title = subtitle_font.render('按键操作', True, COLOR_DARK_RED_TEXT)
+        window_surf.blit(control_title, (40, y_pos))
+        y_pos += 40
+        
+        # 获取按键绑定设置
+        up_key = self.key_bindings['up']['text']
+        down_key = self.key_bindings['down']['text']
+        left_key = self.key_bindings['left']['text']
+        right_key = self.key_bindings['right']['text']
+        shoot_key = self.key_bindings['shoot']['text']
+        shoot_switch_key = self.key_bindings['shoot_switch']['text']
+        
+        controls = [
+            f'{up_key}/{down_key}/{left_key}/{right_key}：控制战机移动',
+            f'{shoot_key}键：发射子弹',
+            f'{shoot_switch_key}键：切换射击模式（直射/散射/连射）',
+            'ESC键：返回主菜单'
+        ]
+        
+        for control in controls:
+            text_surf = content_font.render(control, True, COLOR_BLACK)
+            window_surf.blit(text_surf, (40, y_pos))
+            y_pos += line_height
+        
+        y_pos += 20
+        
+        # 游戏提示
+        tips_title = subtitle_font.render('游戏提示', True, COLOR_DARK_RED_TEXT)
+        window_surf.blit(tips_title, (40, y_pos))
+        y_pos += 40
+        
+        tips = [
+            '- 消灭敌人可以获得分数',
+            '- 收集掉落的道具可以获得强化效果',
+            '- 随着游戏进行，敌人会变得更加强大',
+            '- 游戏分为4个阶段，可解锁新的射击模式',
+            '- 注意躲避敌人的子弹和撞击'
+        ]
+        
+        for tip in tips:
+            text_surf = content_font.render(tip, True, COLOR_BLACK)
+            window_surf.blit(text_surf, (40, y_pos))
+            y_pos += line_height
+        
+        # 将窗口绘制到屏幕上
+        screen.blit(window_surf, (window_x, window_y))
+
     def handle_key_bind_input(self, key):
         """处理按键绑定输入"""
         if self.input_active and self.active_key_binding:
@@ -2168,8 +2218,6 @@ class UIManager:
             if self.input_cursor_timer >= 0.5:
                 self.input_cursor_visible = not self.input_cursor_visible
                 self.input_cursor_timer = 0
-
-
 class CollisionManager:
     """碰撞检测管理器"""
     def __init__(self, game):
@@ -2211,8 +2259,7 @@ class CollisionManager:
             for b2 in self.game.bullets[i+1:]:
                 if b2 in bullets_to_remove:
                     continue
-                
-        
+
                 b2_collision_rect = pygame.Rect(
                     b2.x - 2 * collision_box_expansion,
                     b2.y - 2 * collision_box_expansion,
@@ -2243,7 +2290,6 @@ class CollisionManager:
 
         # 移除碰撞的子弹
         self.game.bullets = [b for b in self.game.bullets if b not in bullets_to_remove]
-        
 
         if bullet_collision_count > 0:
             self.game.current_game_stats['bullets_collided'] += bullet_collision_count
@@ -2254,7 +2300,7 @@ class CollisionManager:
         bullets_to_remove = []
         
         for b in self.game.bullets:
-            if b.owner == 'enemy' and b.rect.colliderect(self.game.player.rect):
+            if b.owner == BULLET_OWNER_ENEMY and b.rect.colliderect(self.game.player.rect):
                 # 检查玩家是否有激活的护盾
                 shield_active = self.game.player.shield and self.game.player.shield.active
                 
@@ -2299,7 +2345,7 @@ class CollisionManager:
         bullets_to_remove = []
         
         for b in self.game.bullets:
-            if b.owner != 'player':
+            if b.owner != BULLET_OWNER_PLAYER:
                 continue
                 
             for e in self.game.enemies:
@@ -2383,7 +2429,6 @@ class CollisionManager:
         # 减少生命值
         damage = 200 if crash else 100
         self.game.player.health -= damage
-        
 
         current_time = time.time()
         self.game.player.last_hit_time = current_time
@@ -2435,7 +2480,6 @@ class CollisionManager:
         health_text_width = self.game.ui_manager.font.size(f'生命值: {self.game.player.health}')[0]
         ft = FloatingText(8 + health_text_width + 4, 36, '+100', COLOR_LIGHT_GREEN)
         self.game.floating_texts.append(ft)
-        
 
         # 无论玩家是否曾经受伤，只要当前处于无状态，都允许重新积累连续击杀
         self.game.player.consecutive_kills += 1
@@ -2456,7 +2500,6 @@ class CollisionManager:
         self.game.current_game_stats['enemies_killed'] += 1
         self.game.statistics['total_enemies_killed'] += 1
 
-    
     def _handle_player_vs_powerup(self):
         """处理玩家与小道具的碰撞"""
         powerups_to_remove = []
@@ -2472,8 +2515,7 @@ class CollisionManager:
                 # 如果有定时器任务，保存到游戏的定时器任务列表
                 if task and self.game.powerup_tasks:
                     self.game.powerup_tasks.append(task)
-                
-        
+
                 powerup_name = powerup.power_type
                 # 转换为可读格式
                 if powerup_name == 'speed':
@@ -2545,7 +2587,6 @@ class CollisionManager:
                 
                 # 触发随机事件效果
                 event_type = event.event_type
-                
                 # 根据事件类型触发相应效果
                 if event_type == 1:
                     # 科技发展
@@ -2580,7 +2621,7 @@ class CollisionManager:
         def reset_tech_develop():
             self.game.tech_develop = False
         
-        runTaskLater(reset_tech_develop, 15000)
+        runTaskLater(reset_tech_develop, 30000)
     
     def _trigger_economy_develop(self):
         """触发经济发展事件"""
@@ -2594,7 +2635,7 @@ class CollisionManager:
         def reset_economy_develop():
             self.game.economy_develop = False
         
-        runTaskLater(reset_economy_develop, 15000)
+        runTaskLater(reset_economy_develop, 30000)
     
     def _trigger_hack_attack(self):
         """触发黑客入侵事件"""
@@ -2685,9 +2726,7 @@ class CollisionManager:
         def reset_hurricane():
             self.game.hurricane_active = False
         
-        runTaskLater(reset_hurricane, 15000)
-
-
+        runTaskLater(reset_hurricane, 30000)
 class Game:
     """游戏主类"""
             
@@ -2699,10 +2738,8 @@ class Game:
         self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         pygame.display.set_caption('飞机大战 - balugaq')
         self.clock = pygame.time.Clock()
-        
 
         self._load_resources()
-        
 
         self.ui_manager = UIManager(self)
         self.collision_manager = CollisionManager(self)
@@ -2728,19 +2765,18 @@ class Game:
         self.settings_file = os.path.join(self.data_dir, 'settings.json')
         self.stats_file = os.path.join(self.data_dir, 'statistics.json')
         
+        self.bullets_piercing = False
 
         self._load_settings()
-        
 
         self._init_statistics()
-        
 
         self.allow_switch_shoot_type = True
         
         # 随机事件相关属性
         self.random_events = []  # 存储所有随机事件实体
         self.random_event_timer = 0.0  # 随机事件生成计时器
-        self.random_event_interval = 15.0  # 随机事件生成间隔（秒）
+        self.random_event_interval = 50.0  # 随机事件生成间隔（秒）
         
         # 事件状态标志
         self.tech_develop = False  # 科技发展状态
@@ -2798,7 +2834,6 @@ class Game:
                 # 将音量值设置回volume_settings字典，确保UI显示正确
                 if 'master' in self.ui_manager.volume_settings:
                     self.ui_manager.volume_settings['master']['value'] = int(self.ui_manager.master_volume * 100)
-            
 
             pygame.mixer.music.set_volume(self.ui_manager.master_volume * self.ui_manager.music_volume)
             
@@ -2943,7 +2978,6 @@ class Game:
         self.snd_powerup = Utils.load_sound(SOUND_POWERUP)
         self.snd_shield_hit = Utils.load_sound('shield_hit')
         self.snd_shield_fail = Utils.load_sound('shield_fail')
-        
 
         self.music_volume = 0.5
         self.music_loaded = False
@@ -2977,15 +3011,12 @@ class Game:
         if hasattr(self, 'rapid_shot_counter_task') and self.rapid_shot_counter_task:  # 保留此检查，因为任务可能不存在
             self.rapid_shot_counter_task.cancel()
             self.rapid_shot_counter_task = None
-        
 
         self.player = Player(SCREEN_W // 2 - 18, SCREEN_H - 150, self.player_img)
-        
 
         self.player.morale = 0
         self.player.consecutive_kills = 0
         self.player.last_hit_time = -1
-        
 
         self.bullets = []
         self.enemies = []
@@ -3001,12 +3032,11 @@ class Game:
         self.state = GAME_STATE_TITLE  # title / playing / gameover
         # 记录进入的时间
         self.state_enter_time = time.time()
-        self.stage = 4  # 游戏阶段，1-4
+        self.stage = 1  # 游戏阶段，1-4
         # 按键冷却时间配置
         self.playing_r_cooldown = 2.0  # 游戏状态R键冷却时间（秒）
         self.title_esc_cooldown = 2.0  # 主界面ESC键冷却时间（秒）
 
-        
         # 模态窗口重置
         self.ui_manager.modal_active = False
         self.ui_manager.modal_progress = 0.0
@@ -3016,7 +3046,6 @@ class Game:
         self.start_transition = False
         self.transition_progress = 0.0
         self.transition_speed = 2.0
-        
 
         self.paused = not self.has_focus
         
@@ -3043,9 +3072,8 @@ class Game:
         # 确定敌机级别和生命值
         enemy_level = enemy_index + 1  # level从1开始
         hp = enemy_level * 100  # 根据级别设置生命值：1级100，2级200，3级300，4级400
-        
 
-        e = Enemy(x, -40, vy=random.randint(100, 160), hp=hp, score=100, image=highest_enemy_image, stage=enemy_level)
+        e = Enemy(x, -40, game=self, vy=random.randint(100, 160), hp=hp, score=100, image=highest_enemy_image, stage=enemy_level)
         e.level = enemy_level
         self.enemies.append(e)
         
@@ -3081,7 +3109,6 @@ class Game:
         
         # 随机选择一个可用区域
         zone = random.choice(available_zones)
-        
 
         if zone == ZONE_LEFT:
             # 左半场的上半部分
@@ -3123,14 +3150,12 @@ class Game:
                 powerup_types.append('super_scatter_shoot')
             if self.stage >= 4:
                 powerup_types.append('super_rapid_shoot')
-        
-        
+
         if not powerup_types:
             return
         
         # 随机选择小道具类型
         powerup_type = random.choice(powerup_types)
-        
 
         if powerup_type == 'speed':
             powerup = SpeedPowerUp(x, y)
@@ -3147,8 +3172,7 @@ class Game:
         self.powerups.append(powerup)
         
         # 播放powerup音效
-        if hasattr(self, 'snd_powerup'):  # 保留此检查，因为声音资源可能未加载
-            Utils.play_sound(self.snd_powerup, self)
+        Utils.play_sound(self.snd_powerup, self)
     
     def spawn_enemy(self):
         """生成敌机，根据stage调整生成逻辑"""
@@ -3165,9 +3189,8 @@ class Game:
         stage_images = {}
         for stage, images in base_stage_images.items():
             stage_images[stage] = [img.copy() for img in images]
-        
 
-        # 难度系数
+        # todo: 难度系数
         # 简易: 3.0 2.0 2.0 2.0
         # 中等（默认）: 2.0 1.8 1.6 1.5
         # 困难: 2.0 1.6 1.5 1.2
@@ -3283,9 +3306,8 @@ class Game:
                     
                     # 根据级别设置生命值
                     hp = enemy_level * 100
-                    
-            
-                    e = Enemy(x, -40, vy=vy, hp=hp, score=100, image=enemy_image, stage=enemy_level)
+
+                    e = Enemy(x, -40, game=self, vy=vy, hp=hp, score=100, image=enemy_image, stage=enemy_level)
             
                     e.level = enemy_level
                     self.enemies.append(e)
@@ -3309,7 +3331,7 @@ class Game:
             # 根据级别设置生命值：1级100，2级200，3级300，4级400
             hp = enemy_level * 100
             
-            e = Enemy(x, -40, vy=random.randint(100, 160), hp=hp, score=100, image=enemy_image, stage=enemy_level)
+            e = Enemy(x, -40, game=self, vy=random.randint(100, 160), hp=hp, score=100, image=enemy_image, stage=enemy_level)
             e.level = enemy_level
             self.enemies.append(e)
     
@@ -3322,22 +3344,18 @@ class Game:
             bullet.rect = pygame.Rect(bullet.x, bullet.y, bullet.w, bullet.h)
         
         # 如果是玩家子弹且游戏有穿透模式标记，设置穿透属性
-        if owner == 'player' and hasattr(self, 'bullets_piercing') and self.bullets_piercing:
+        if owner == BULLET_OWNER_PLAYER and self.bullets_piercing:
             bullet.piercing = True
             
         return bullet
     
     def update(self, dt):
         """更新游戏逻辑"""
-
-
         for ex in self.explosions:
             ex.update(dt)
-        
 
         for ft in self.floating_texts:
             ft.update(dt)
-        
 
         for powerup in self.powerups:
             powerup.update(dt)
@@ -3379,29 +3397,24 @@ class Game:
         
                 if self.stage <= 2:
                     # stage 1-2: 只能直射
-                    # 玩家射击类型检查
-                        # 保存原始射击方式，用于stage提升后恢复
-                        if not hasattr(self.player, 'saved_shoot_type'):  # 保留此检查，因为saved_shoot_type可能不存在
-                            self.player.saved_shoot_type = self.player.current_shoot_type
-                        self.player.current_shoot_type = SHOOT_TYPE_DIRECT
-                elif self.stage == 3:
-                    # stage 3: 可以直射或散射
-                    if hasattr(self.player, 'saved_shoot_type'):  # 保留此检查，因为saved_shoot_type可能不存在
-                
-                        if self.player.saved_shoot_type in [SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER]:
-                            self.player.current_shoot_type = self.player.saved_shoot_type
-                        else:
-                            self.player.current_shoot_type = SHOOT_TYPE_DIRECT  # 默认直射
-                        delattr(self.player, 'saved_shoot_type')
-                elif self.stage == 4:
-                    # stage 4: 可以直射、散射或连射
-                    if hasattr(self.player, 'saved_shoot_type'):
-                
-                        if self.player.saved_shoot_type in [SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER, SHOOT_TYPE_RAPID]:
-                            self.player.current_shoot_type = self.player.saved_shoot_type
-                        else:
-                            self.player.current_shoot_type = SHOOT_TYPE_DIRECT  # 默认直射
-                        delattr(self.player, 'saved_shoot_type')
+                    # 保存原始射击方式，用于stage提升后恢复
+                    self.player.saved_shoot_type = self.player.current_shoot_type
+                    self.player.current_shoot_type = SHOOT_TYPE_DIRECT
+                elif self.stage == 3 or self.stage == 4:
+                    # stage 3-4: 恢复保存的射击类型
+                    # 根据当前stage确定可用的射击类型
+                    allowed_types = [SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER]
+                    if self.stage == 4:
+                        allowed_types.append(SHOOT_TYPE_RAPID)
+                    
+                    # 检查saved_shoot_type是否有效（避免hasattr）
+                    if getattr(self.player, 'saved_shoot_type', None) in allowed_types:
+                        self.player.current_shoot_type = self.player.saved_shoot_type
+                    else:
+                        self.player.current_shoot_type = SHOOT_TYPE_DIRECT  # 默认直射
+                    
+                    # 重置保存的射击类型而不是删除属性
+                    self.player.saved_shoot_type = None
             
             # 动态调整按键重复频率
             # 当游戏开始且按下的是移动键时，使用较快的重复频率
@@ -3414,11 +3427,9 @@ class Game:
             else:
                 # 其他情况使用较慢的重复频率
                 pygame.key.set_repeat(1000, 200)
-            
-    
+
             self.player.update(dt, keys, self)
-            
-    
+
             if self.player.shield and self.player.shield.active:
                 self.player.shield.update()
 
@@ -3428,7 +3439,7 @@ class Game:
                 bullets = self.player.shoot(is_auto=True, game=self)  # 调用相同的shoot方法，但标记为自动射击
                 if bullets:
                     for b in bullets:
-                        new_b = self.create_bullet('player', b.x, b.y, b.vy)
+                        new_b = self.create_bullet(BULLET_OWNER_PLAYER, b.x, b.y, b.vy)
                         # 复制子弹的射击类型和角度属性
                         new_b.shoot_type = b.shoot_type
                         new_b.angle = b.angle
@@ -3440,22 +3451,20 @@ class Game:
                 bullets = self.player.shoot(game=self)
                 if bullets:
                     for b in bullets:
-                        new_b = self.create_bullet('player', b.x, b.y, b.vy)
+                        new_b = self.create_bullet(BULLET_OWNER_PLAYER, b.x, b.y, b.vy)
                         # 复制子弹的射击类型和角度属性，确保散射状态下正确发射散射子弹
                         new_b.shoot_type = b.shoot_type
                         new_b.angle = b.angle
                         Utils.play_sound(self.snd_player_shoot, self)
                         self.bullets.append(new_b)
 
-    
             for b in self.bullets:
                 b.update(dt)
 
-    
             for e in self.enemies:
                 new_bullets = e.update(dt)
                 for b in new_bullets:
-                    new_b = self.create_bullet('enemy', b.x, b.y, b.vy)
+                    new_b = self.create_bullet(BULLET_OWNER_ENEMY, b.x, b.y, b.vy)
                     Utils.play_sound(self.snd_enemy_shoot, self)
                     self.bullets.append(new_b)
 
@@ -3485,11 +3494,11 @@ class Game:
                 self.stage = 2
                 self.spawn_interval = 1.5  
                 # 显示阶段提升信息
-                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 2', (255, 215, 0), duration=2.0, rise_speed=20))
+                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 2', COLOR_GOLD, duration=2.0, rise_speed=20))
             elif self.stage == 2 and self.current_game_stats['enemies_killed'] >= 120:
                 self.stage = 3
                 self.spawn_interval = 1.2
-                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 3', (255, 215, 0), duration=2.0, rise_speed=20))
+                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 3', COLOR_GOLD, duration=2.0, rise_speed=20))
                 # 添加蓝色浮动文字提示已解锁散射模式
                 if self.player:
                     self.floating_texts.append(FloatingText(
@@ -3503,7 +3512,7 @@ class Game:
             elif self.stage == 3 and self.current_game_stats['enemies_killed'] >= 300:
                 self.stage = 4
                 self.spawn_interval = 1.0
-                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 4', (255, 215, 0), duration=2.0, rise_speed=20))
+                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 4', COLOR_GOLD, duration=2.0, rise_speed=20))
                 # 添加蓝色浮动文字提示已解锁连射模式
                 if self.player:
                     self.floating_texts.append(FloatingText(
@@ -3514,9 +3523,7 @@ class Game:
                         duration=2.0,
                         rise_speed=40
                     ))
-            
-    
-    
+
     def draw(self):
         """绘制游戏画面"""
         if self.state == GAME_STATE_TITLE or self.ui_manager.stats_active:
@@ -3565,7 +3572,7 @@ class Game:
         if self.state == GAME_STATE_GAMEOVER:
             # 清除所有notice
             if self.ui_manager:
-                self.ui_manager.clear_all_top_right_text()
+                self.ui_manager.clear_top_right_text()
             self._draw_gameover_screen()
 
         pygame.display.flip()
@@ -3585,7 +3592,7 @@ class Game:
             self.screen.blit(self.bg_img, (0, y1))
             self.screen.blit(self.bg_img, (0, y2))
         else:
-            self.screen.fill((16, 16, 32))
+            self.screen.fill(COLOR_NAVY_BLUE)
     
     def _draw_title_screen(self):
         """绘制标题界面"""
@@ -3598,11 +3605,11 @@ class Game:
         
         # 绘制标题
         self.ui_manager.draw_title(self.screen, self.start_transition, self.transition_progress)
-        
 
         if self.ui_manager.settings_active:
             self.ui_manager.draw_settings(self.screen)
-
+        elif self.ui_manager.tutorial_active:
+            self.ui_manager.draw_tutorial(self.screen)
         elif self.ui_manager.stats_active:
             Utils.debug("绘制统计界面，stats_active=True")
             Utils.debug(f"当前统计数据: {self.statistics}")
@@ -3624,8 +3631,8 @@ class Game:
     def _draw_pause_screen(self):
         """绘制暂停界面"""
         if self.paused and not self.ui_manager.modal_active and self.state != GAME_STATE_GAMEOVER:
-            pause_text = self.ui_manager.large_font.render('游戏已暂停', True, (255, 255, 255))
-            pause_hint = self.ui_manager.font.render('点击窗口继续游戏', True, (200, 200, 200))
+            pause_text = self.ui_manager.large_font.render('游戏已暂停', True, COLOR_WHITE)
+            pause_hint = self.ui_manager.font.render('点击窗口继续游戏', True, COLOR_LIGHT_GRAY)
             px = SCREEN_W // 2 - pause_text.get_width() // 2
             py = SCREEN_H // 2 - pause_text.get_height()
             self.screen.blit(pause_text, (px, py))
@@ -3650,11 +3657,9 @@ class Game:
                 
                 # 处理事件
                 running = self._handle_events(dt)
-                
-        
+
                 self.ui_manager.update_animations(dt)
-                
-        
+
                 if self.ui_manager.modal_active:
                     self.ui_manager.modal_progress += dt * self.ui_manager.modal_fade_speed
                     if self.ui_manager.modal_progress > 1.0:
@@ -3679,23 +3684,18 @@ class Game:
                         
                         def reset_rapid_shot_counter():
                             self.player.rapid_shot_counter = 0
-                        
-                
+
                         self.rapid_shot_counter_task = runTaskTimer(reset_rapid_shot_counter, 0, 1000)
-                
-        
+
                 global_task_scheduler.update()
                 
                 # 清理不再活跃的浮动文字
                 self.floating_texts = [ft for ft in self.floating_texts if ft.alive]
-                
-        
+
                 if not self.ui_manager.modal_active and not self.paused:
                     if self.state == GAME_STATE_PLAYING:
                         self.update(dt)
-                        
 
-                
                 # 绘制游戏
                 self.draw()
             
@@ -3750,8 +3750,7 @@ class Game:
                             new_value = round(raw_value / 2) * 2
                             new_value = max(0, min(100, new_value))
                             vol_info['value'] = new_value
-                            
-                    
+
                             if vol_name == 'music' or vol_name == 'master':
                                 # 计算最终音乐音量 = 主音量 x 音乐音量
                                 master_val = self.ui_manager.volume_settings['master']['value'] / 100
@@ -3798,6 +3797,11 @@ class Game:
             # 优先处理输入栏的ESC键
             if self.ui_manager.number_input_active:
                 self.ui_manager.number_input_active = False
+                Utils.play_sound(self.snd_ui_click, self)
+                return True
+            # 关闭教程页面
+            if self.ui_manager.tutorial_active:
+                self.ui_manager.tutorial_active = False
                 Utils.play_sound(self.snd_ui_click, self)
                 return True
             # 处理统计界面的ESC键
@@ -3913,8 +3917,7 @@ class Game:
                     shoot_type_order = [SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER]
                 else:  # stage 4
                     shoot_type_order = [SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER, SHOOT_TYPE_RAPID]
-                
-        
+
                 current_index = shoot_type_order.index(self.player.current_shoot_type) if self.player.current_shoot_type in shoot_type_order else 0
                 # 循环切换到下一种射击方式
                 new_index = (current_index + 1) % len(shoot_type_order)
@@ -3932,8 +3935,7 @@ class Game:
                 )
                 self.floating_texts.append(ft)
                 # 播放切换音效
-                if hasattr(self, 'snd_ui_click'):  # 保留此检查，因为声音资源可能未加载
-                    Utils.play_sound(self.snd_ui_click, self)
+                Utils.play_sound(self.snd_ui_click, self)
         
         return True
     
@@ -3945,6 +3947,25 @@ class Game:
         if self.ui_manager.stats_active:
             self.ui_manager.handle_statistics_click(pos)
             # 统计界面打开时，不处理其他点击
+            return
+        
+        # 优先处理教程界面点击
+        if self.ui_manager.tutorial_active:
+            # 检查是否点击了关闭按钮
+            if self.ui_manager.close_button_rect:
+                # 计算相对位置
+                window_width = int(SCREEN_W * 0.85)
+                window_x = (SCREEN_W - window_width) // 2
+                window_height = int(SCREEN_H * 0.8)
+                window_y = (SCREEN_H - window_height) // 2
+                
+                # 将屏幕坐标转换为窗口表面坐标
+                popup_pos = (pos[0] - window_x, pos[1] - window_y)
+                if self.ui_manager.close_button_rect.collidepoint(popup_pos):
+                    Utils.play_sound(self.snd_ui_click)
+                    self.ui_manager.tutorial_active = False
+                    return
+            # 教程界面打开时，不处理其他点击
             return
             
         # 标题界面按钮点击
@@ -3961,8 +3982,7 @@ class Game:
                         elif btn_name == 'settings':
                             self.ui_manager.settings_active = True
                         elif btn_name == 'tutorial':
-                            # 教程功能（暂时不实现）
-                            pass
+                            self.ui_manager.tutorial_active = True
                         elif btn_name == 'statistics':
                             self.ui_manager.stats_active = True
             else:
@@ -3976,7 +3996,6 @@ class Game:
             ph = 220
             px = (SCREEN_W - pw) // 2
             py = int(SCREEN_H * 0.18)
-            
 
             if self.ui_manager.close_button_rect:
                 # 将屏幕坐标转换为弹窗表面坐标
@@ -4010,7 +4029,6 @@ class Game:
         # 数字输入确认/取消按钮
         if self.ui_manager.number_input_active:
             if self.ui_manager._input_confirm_btn and self.ui_manager._input_cancel_btn:
-                
                 if self.ui_manager._input_confirm_btn.collidepoint(pos):
                     # 确认输入
                     try:
@@ -4245,15 +4263,12 @@ class Game:
         
         return NoticeHandle()
 
-
-
 def main():
     Utils.debug("开始游戏启动...")
     # 确保窗口居中
     os.environ["SDL_VIDEO_CENTERED"] = "1"
     Utils.debug("环境变量设置完成")
-    
-    
+
     Utils.debug("初始化PyGame...")
     pygame.init()
     Utils.debug("PyGame核心模块初始化完成")
@@ -4274,12 +4289,10 @@ def main():
     game = Game()
     game.run()
 
-
 if __name__ == '__main__':
     try:
         main()
     except Exception as e:
-        import traceback
         Utils.error(f"游戏运行出错: {e}")
         Utils.error("错误详情:")
         traceback.print_exc()
