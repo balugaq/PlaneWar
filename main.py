@@ -3489,6 +3489,7 @@ class Game:
                 self._spawn_highest_level_enemy()
             
             Utils.debug(f"stage: {self.stage} - killed: {self.current_game_stats['enemies_killed']}")
+            # todo: 当stage切换时，使用notice与玩家交互
             # 阶段切换逻辑
             if self.stage == 1 and self.current_game_stats['enemies_killed'] >= 30:
                 self.stage = 2
