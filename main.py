@@ -2,8 +2,8 @@ import json
 import math
 import os
 import random
+import sys
 
-from sys import exit
 from time import time
 from traceback import print_exc
 from typing import *
@@ -152,7 +152,15 @@ SCREEN_H = 800
 FPS = 60
 
 # 资源路径
-ASSETS = 'assets'
+# 判断是否为PyInstaller打包后的环境
+if getattr(sys, 'frozen', False):
+    # 打包后，资源路径指向临时目录中的assets
+    BASE_PATH = sys._MEIPASS
+else:
+    # 开发环境，资源路径为当前目录的assets
+    BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+
+ASSETS = os.path.join(BASE_PATH, 'assets')
 ASSETS_IMG = os.path.join(ASSETS, 'images')
 ASSETS_SFX = os.path.join(ASSETS, 'sfx')
 ASSETS_FONTS = os.path.join(ASSETS, 'fonts')
@@ -4238,7 +4246,7 @@ class Game:
                         self.update_statistics()
                         # 退出游戏
                         pygame.quit()
-                        exit(0)
+                        sys.exit(0)
                     self.ui_manager.modal_active = False
                 
                 elif self.ui_manager._popup_continue_rect.collidepoint(pos):
