@@ -7,6 +7,19 @@ import time
 import traceback
 import uuid
 
+# 禁用libpng警告和pygame支持提示
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+os.environ['PYGAME_ALLOW_SDL2'] = '1'
+# 禁用libpng关于iCCP sRGB配置文件的警告
+os.environ['PYTHONWARNINGS'] = 'ignore::UserWarning:pygame.image'
+# 确保窗口居中
+os.environ["SDL_VIDEO_CENTERED"] = "1"
+try:
+    import pygame
+except Exception:
+    print("需要 pygame 库来运行此脚本。请先安装：pip install pygame")
+    raise
+
 class Task:
     """定时器任务类"""
     def __init__(self, func, period_ms):
@@ -129,17 +142,6 @@ def runTaskTimer(func, delayMs=0, periodMs=10):
         task = Task(func, periodMs)
         return global_task_scheduler.add_task(task)
 
-# 禁用libpng警告和pygame支持提示
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-os.environ['PYGAME_ALLOW_SDL2'] = '1'
-# 禁用libpng关于iCCP sRGB配置文件的警告
-os.environ['PYTHONWARNINGS'] = 'ignore::UserWarning:pygame.image'
-try:
-    import pygame
-except Exception:
-    print("需要 pygame 库来运行此脚本。请先安装：pip install pygame")
-    raise
-
 _VERSION = "1.0.0"
 
 SCREEN_W = 480
@@ -192,6 +194,13 @@ SOUND_HOVER = 'hover'
 SOUND_CLICK = 'click'
 SOUND_FAIL = 'fail'
 SOUND_POWERUP = 'powerup'
+
+# 随机事件类型常量
+EVENT_TECH_DEVELOP = 'tech_develop'  # 科技发展
+EVENT_ECONOMY_DEVELOP = 'economy_develop'  # 经济发展
+EVENT_HACK_ATTACK = 'hack_attack'  # 黑客入侵
+EVENT_AIR_SUPPORT = 'air_support'  # 空中支援
+EVENT_HURRICANE = 'hurricane'  # 飓风袭击
 
 # 区域常量
 ZONE_LEFT = 'left'
@@ -395,14 +404,21 @@ class Utils:
     
     @staticmethod
     def load_data(file_path):
-        """从JSON文件加载数据"""
+        """从JSON文件加载数据，处理不同类型的异常"""
         try:
             if not os.path.exists(file_path):
+                Utils.debug(f"文件不存在: {file_path}")
                 return None
             with open(file_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
+        except json.JSONDecodeError as e:
+            Utils.debug(f"JSON解析错误（文件可能损坏）: {file_path}, 错误: {e}")
+            return "JSON_ERROR"
+        except PermissionError as e:
+            Utils.debug(f"文件权限错误: {file_path}, 错误: {e}")
+            return "PERMISSION_ERROR"
         except Exception as e:
-            Utils.debug(f"加载数据失败: {e}")
+            Utils.debug(f"加载数据失败: {file_path}, 错误: {e}")
             return None
     
     @staticmethod
@@ -784,9 +800,6 @@ class RandomEvent:
         # 移动速度（每秒8像素）
         self.speed = 8.0
         
-        # 随机事件类型（1-5对应5种不同事件）
-        self.event_type = random.randint(1, 5)
-        
         # 特效相关属性
         self.effect_timer = 0  # 特效计时器
         self.effect_interval = 0.5  # 特效间隔（秒）
@@ -1080,7 +1093,6 @@ class SuperScatterShootPowerUp(PowerUp):
 
         def restore_shoot_settings():
             player.current_shoot_type = original_shoot_type
-            # 恢复原始的create_bullet方法
             game.bullets_piercing = False
             game.allow_switch_shoot_type = True
         
@@ -1094,14 +1106,13 @@ class Enemy:
         self.x = x
         self.y = y
         self.vy = vy
-        self.vx = vx  # 添加水平速度属性，支持飓风效果
-        # 存储原始速度，用于飓风效果恢复
-        self.original_vx = vx
-        self.original_vy = vy
+        self.vx = vx
         self.hp = hp
         self.score = score
-        self.stage = stage  # 使用传入的stage参数
+        self.stage = stage
         self.game = game
+        if self.game.hurricane_active:
+            self.vx += 20 if random.random() > 0.5 else -20
 
         self.img = image if image else Utils.make_pixel_sprite(10, 10, (255, 80, 80), scale=3)
         self.w = self.img.get_width()
@@ -1215,13 +1226,9 @@ class Enemy:
         """更新位置并可能返回敌方子弹列表"""
         # 检查是否有飓风效果
         if self.game.hurricane_active:
-            # 随机改变方向
-            if random.random() > 0.5:
-                self.vx = self.original_vx * 1.5 * (1 if random.random() > 0.5 else -1)
-            else:
-                self.vx = self.original_vx * 1.5
-            
-            self.vy = self.original_vy * 1.5
+            self.y += (self.vy + 1) * 0.01
+        else:
+            self.vx = 0
         
         # 更新位置
         self.x += self.vx * dt
@@ -1229,7 +1236,11 @@ class Enemy:
         self.rect.topleft = (self.x, self.y)
         
         # 确保敌人在屏幕内或附近
-        if self.x < -50 or self.x > SCREEN_W + 50:
+        if self.x < 32:
+            self.x = 32
+            self.vx = -self.vx  # 反弹
+        if self.x > SCREEN_W - 32:
+            self.x = SCREEN_W - 32
             self.vx = -self.vx  # 反弹
 
         self.time_since_shot += dt
@@ -1339,6 +1350,10 @@ class UIManager:
         self._input_confirm_btn = None
         self._input_cancel_btn = None
         
+        # 错误弹窗相关状态
+        self.error_popup_active = False
+        self.error_popup_message = ""
+        
         # 标题界面按钮
         self.title_buttons = {
             'start': {
@@ -1376,12 +1391,12 @@ class UIManager:
         self.input_active = False
         self.active_key_binding = None
         # 关闭按钮位置
-        self.close_button_rect = pygame.Rect(340, 20, 40, 40)
+        self.close_button_rect = pygame.Rect(380, 20, 40, 40)
 
         self.volume_settings = {
-            'master': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 100, 200, 20), 'dragging': False},
-            'music': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 150, 200, 20), 'dragging': False},
-            'sound': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 200, 200, 20), 'dragging': False}
+            'master': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 80, 200, 20), 'dragging': False},
+            'music': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 130, 200, 20), 'dragging': False},
+            'sound': {'value': 100, 'editing': False, 'rect': pygame.Rect(150, 180, 200, 20), 'dragging': False}
         }
         
         # 数字输入界面状态
@@ -1390,17 +1405,23 @@ class UIManager:
         self.input_value = ""
         self.input_cursor_visible = True
         self.input_cursor_timer = 0
+        
+        # 难度设置
+        self.difficulty_levels = ['简易', '中等', '困难']
+        self.current_difficulty_index = 1  # 默认中等难度
+        # 难度按钮位置 - 在音量设置下方，按键绑定上方
+        self.difficulty_button_rect = pygame.Rect(150, 220, 200, 40)
 
         self.key_bindings = {
-            "up": {'key': pygame.K_w, 'text': 'W', 'rect': pygame.Rect(260, 280, 80, 40), 'default_key': pygame.K_w, 'default_text': 'W'},
-            "down": {'key': pygame.K_s, 'text': 'S', 'rect': pygame.Rect(260, 330, 80, 40), 'default_key': pygame.K_s, 'default_text': 'S'},
-            "left": {'key': pygame.K_a, 'text': 'A', 'rect': pygame.Rect(260, 380, 80, 40), 'default_key': pygame.K_a, 'default_text': 'A'},
-            "right": {'key': pygame.K_d, 'text': 'D', 'rect': pygame.Rect(260, 430, 80, 40), 'default_key': pygame.K_d, 'default_text': 'D'},
-            "shoot": {'key': pygame.K_SPACE, 'text': 'SPACE', 'rect': pygame.Rect(260, 480, 120, 40), 'default_key': pygame.K_SPACE, 'default_text': 'SPACE'},
-            "music": {'key': pygame.K_m, 'text': 'M', 'rect': pygame.Rect(260, 530, 80, 40), 'default_key': pygame.K_m, 'default_text': 'M'},
-            'restart': {'key': pygame.K_r, 'text': 'R', 'rect': pygame.Rect(260, 580, 80, 40), 'default_key': pygame.K_r, 'default_text': 'R'},
-            "shoot_switch": {'key': pygame.K_z, 'text': 'Z', 'rect': pygame.Rect(260, 630, 80, 40), 'default_key': pygame.K_z, 'default_text': 'Z'},
-            'show_stats': {'key': pygame.K_x, 'text': 'X', 'rect': pygame.Rect(260, 680, 80, 40), 'default_key': pygame.K_x, 'default_text': 'X'}
+            "up": {'key': pygame.K_w, 'text': 'W', 'rect': pygame.Rect(260, 310, 80, 40), 'default_key': pygame.K_w, 'default_text': 'W'},
+            "down": {'key': pygame.K_s, 'text': 'S', 'rect': pygame.Rect(260, 360, 80, 40), 'default_key': pygame.K_s, 'default_text': 'S'},
+            "left": {'key': pygame.K_a, 'text': 'A', 'rect': pygame.Rect(260, 410, 80, 40), 'default_key': pygame.K_a, 'default_text': 'A'},
+            "right": {'key': pygame.K_d, 'text': 'D', 'rect': pygame.Rect(260, 460, 80, 40), 'default_key': pygame.K_d, 'default_text': 'D'},
+            "shoot": {'key': pygame.K_SPACE, 'text': 'SPACE', 'rect': pygame.Rect(260, 510, 120, 40), 'default_key': pygame.K_SPACE, 'default_text': 'SPACE'},
+            "music": {'key': pygame.K_m, 'text': 'M', 'rect': pygame.Rect(260, 560, 80, 40), 'default_key': pygame.K_m, 'default_text': 'M'},
+            'restart': {'key': pygame.K_r, 'text': 'R', 'rect': pygame.Rect(260, 610, 80, 40), 'default_key': pygame.K_r, 'default_text': 'R'},
+            "shoot_switch": {'key': pygame.K_z, 'text': 'Z', 'rect': pygame.Rect(260, 660, 80, 40), 'default_key': pygame.K_z, 'default_text': 'Z'},
+            'show_stats': {'key': pygame.K_x, 'text': 'X', 'rect': pygame.Rect(260, 710, 80, 40), 'default_key': pygame.K_x, 'default_text': 'X'}
         }
         
         # 恢复默认按钮 - 调整位置，增加间距
@@ -1413,19 +1434,20 @@ class UIManager:
         
         # 标签按钮
         self.settings_labels = {
-            "master": {'text': '主音量', 'rect': pygame.Rect(50, 95, 80, 30)},
-            "music": {'text': '音乐音量', 'rect': pygame.Rect(50, 145, 80, 30)},
-            "sound": {'text': '音效音量', 'rect': pygame.Rect(50, 195, 80, 30)},
-            'keybind': {'text': '按键绑定', 'rect': pygame.Rect(50, 245, 80, 30)},
-            "up": {'text': '向上移动', 'rect': pygame.Rect(50, 280, 120, 40)},
-            "down": {'text': '向下移动', 'rect': pygame.Rect(50, 330, 120, 40)},
-            "left": {'text': '向左移动', 'rect': pygame.Rect(50, 380, 120, 40)},
-            "right": {'text': '向右移动', 'rect': pygame.Rect(50, 430, 120, 40)},
-            "shoot": {'text': '发射子弹', 'rect': pygame.Rect(50, 480, 120, 40)},
-            "bgm": {'text': '开关音乐', 'rect': pygame.Rect(50, 530, 120, 40)},
-            'restart': {'text': '重新开始', 'rect': pygame.Rect(50, 580, 120, 40)},
-            "shoot_switch": {'text': '射击模式切换', 'rect': pygame.Rect(50, 630, 120, 40)},
-            'show_stats': {'text': '打开统计', 'rect': pygame.Rect(50, 680, 120, 40)}
+            "master": {'text': '主音量', 'rect': pygame.Rect(50, 75, 80, 30)},
+            "music": {'text': '音乐音量', 'rect': pygame.Rect(50, 125, 80, 30)},
+            "sound": {'text': '音效音量', 'rect': pygame.Rect(50, 175, 80, 30)},
+            "difficulty": {'text': '游戏难度', 'rect': pygame.Rect(50, 225, 80, 30)},
+            'keybind': {'text': '按键绑定', 'rect': pygame.Rect(50, 275, 80, 30)},
+            "up": {'text': '向上移动', 'rect': pygame.Rect(50, 310, 120, 40)},
+            "down": {'text': '向下移动', 'rect': pygame.Rect(50, 360, 120, 40)},
+            "left": {'text': '向左移动', 'rect': pygame.Rect(50, 410, 120, 40)},
+            "right": {'text': '向右移动', 'rect': pygame.Rect(50, 460, 120, 40)},
+            "shoot": {'text': '发射子弹', 'rect': pygame.Rect(50, 510, 120, 40)},
+            "bgm": {'text': '开关音乐', 'rect': pygame.Rect(50, 560, 120, 40)},
+            'restart': {'text': '重新开始', 'rect': pygame.Rect(50, 610, 120, 40)},
+            "shoot_switch": {'text': '射击模式切换', 'rect': pygame.Rect(50, 660, 120, 40)},
+            'show_stats': {'text': '打开统计', 'rect': pygame.Rect(50, 710, 120, 40)}
         }
 
         self.title_logo = Utils.load_image('logo', (120, 120))
@@ -1551,7 +1573,7 @@ class UIManager:
     def draw_settings(self, screen):
         """绘制设置界面"""
         settings_w = 400
-        settings_h = 650
+        settings_h = 780
         settings_x = SCREEN_W // 2 - settings_w // 2
         settings_y = SCREEN_H // 2 - settings_h // 2
         p = max(0.0, min(1.0, self.settings_progress))
@@ -1597,6 +1619,22 @@ class UIManager:
 
         # 绘制音量滑块
         self._draw_volume_sliders(window_surf, settings_x, settings_y, p)
+        
+        # 绘制难度按钮
+        difficulty_btn_color = (200, 200, 200, int(240 * p))
+        pygame.draw.rect(window_surf, difficulty_btn_color,
+                        (self.difficulty_button_rect.x - settings_x,
+                        self.difficulty_button_rect.y - settings_y,
+                        self.difficulty_button_rect.width,
+                        self.difficulty_button_rect.height),
+                        border_radius=8)
+        
+        # 绘制难度文本
+        current_difficulty = self.difficulty_levels[self.current_difficulty_index]
+        difficulty_text = self.font.render(current_difficulty, True, COLOR_BLACK)
+        window_surf.blit(difficulty_text,
+                        (self.difficulty_button_rect.x - settings_x + (self.difficulty_button_rect.width - difficulty_text.get_width()) // 2,
+                        self.difficulty_button_rect.y - settings_y + (self.difficulty_button_rect.height - difficulty_text.get_height()) // 2))
         
         # 绘制按键绑定按钮
         self._draw_key_bindings(window_surf, settings_x, settings_y, p)
@@ -1653,16 +1691,16 @@ class UIManager:
             text_width = text.get_width()
             
             # 动态计算按钮宽度，根据文字大小调整
-            button_width = max(min_button_width, text_width + padding * 2)  # 增加最小宽度
+            button_width = max(min_button_width + 20, text_width + padding * 2 + 20)
             
             # 绘制恢复默认按钮（先绘制左侧的恢复默认按钮）
             reset_btn_rect = self.reset_default_buttons[key_name]
-            # 确保恢复默认按钮宽度足够
+            # 恢复默认按钮
             reset_width = 80  # 固定的恢复默认按钮宽度
             
             # 绘制恢复默认按钮
             pygame.draw.rect(window_surf, reset_btn_color,
-                            (reset_btn_rect.x - settings_x,
+                            (reset_btn_rect.x - settings_x + 40,
                             reset_btn_rect.y - settings_y,
                             reset_width,
                             reset_btn_rect.height),
@@ -1671,19 +1709,19 @@ class UIManager:
             # 绘制恢复默认按钮文字
             reset_text = self.font.render("恢复默认", True, COLOR_BLACK)
             window_surf.blit(reset_text, 
-                            (reset_btn_rect.x - settings_x + (reset_width - reset_text.get_width()) // 2,
+                            (reset_btn_rect.x - settings_x + 40 + (reset_width - reset_text.get_width()) // 2,
                             reset_btn_rect.y - settings_y + (reset_btn_rect.height - reset_text.get_height()) // 2))
             
             # 绘制按键背景，使用动态计算的宽度
             pygame.draw.rect(window_surf, color,
-                            (key_info['rect'].x - settings_x,
+                            (key_info['rect'].x - settings_x + 40,
                             key_info['rect'].y - settings_y,
                             button_width,
                             key_info['rect'].height),
                             border_radius=8)
             
             # 文字居中显示，避免靠左导致的重叠问题
-            window_surf.blit(text, (key_info['rect'].x - settings_x + (button_width - text_width) // 2,
+            window_surf.blit(text, (key_info['rect'].x - settings_x + 40 + (button_width - text_width) // 2,
                                 key_info['rect'].y - settings_y + (key_info['rect'].height - text.get_height()) // 2))
     
     def _draw_number_input(self, screen, p):
@@ -1907,6 +1945,14 @@ class UIManager:
                 self.game.save_settings()
                 return True
                 
+            # 检查难度按钮点击
+            if self.difficulty_button_rect.collidepoint(pos):
+                # 循环切换难度级别
+                self.current_difficulty_index = (self.current_difficulty_index + 1) % len(self.difficulty_levels)
+                # 保存设置到settings.json
+                self.game.save_settings()
+                return True
+                
             # 检查音量滑块及数值区域
             for vol_name, vol_info in self.volume_settings.items():
                 slider_rect = vol_info['rect']
@@ -1947,21 +1993,28 @@ class UIManager:
                 for key_name, key_info in self.key_bindings.items():
         
                     text = self.font.render(key_info['text'], True, COLOR_BLACK)
-                    button_width = max(80, text.get_width() + 24)  # 与_draw_key_bindings方法中的计算保持一致
-                    key_rect = pygame.Rect(key_info['rect'].x, key_info['rect'].y, button_width, key_info['rect'].height)
-                    
+                    button_width = max(100, text.get_width() + 44)
                     # 检查恢复默认按钮点击
                     reset_btn_rect = self.reset_default_buttons[key_name]
-                    if reset_btn_rect.collidepoint(pos):
-                        # 恢复为默认按键
-                        self.key_bindings[key_name]['key'] = self.key_bindings[key_name]['default_key']
-                        self.key_bindings[key_name]['text'] = self.key_bindings[key_name]['default_text']
-                        # 播放点击音效
-                        Utils.play_sound(self.game.snd_ui_click, self.game)
+                    adjusted_reset_rect = pygame.Rect(
+                        reset_btn_rect.x + 40,
+                        reset_btn_rect.y,
+                        80,  # 恢复默认按钮宽度
+                        reset_btn_rect.height
+                    )
+                    if adjusted_reset_rect.collidepoint(pos):
+                        # 恢复默认按键绑定
+                        self.reset_key_binding(key_name)
                         return True
-                    # 检查按键显示区域点击
-                    if key_rect.collidepoint(pos) or \
-                    (self.settings_labels[key_name]['rect'].collidepoint(pos) if key_name in self.settings_labels else False):
+                    # 检查按键按钮点击
+                    adjusted_key_rect = pygame.Rect(
+                        key_info['rect'].x + 40,
+                        key_info['rect'].y,
+                        button_width,
+                        key_info['rect'].height
+                    )
+                    if adjusted_key_rect.collidepoint(pos):
+                        # 开始等待按键输入
                         self.input_active = True
                         self.active_key_binding = key_name
                         return True
@@ -1974,6 +2027,17 @@ class UIManager:
 
         return False
     
+    def reset_key_binding(self, key_name):
+        """恢复指定按键的默认绑定"""
+        if key_name in self.key_bindings:
+            key_info = self.key_bindings[key_name]
+            if 'default_key' in key_info and 'default_text' in key_info:
+                key_info['key'] = key_info['default_key']
+                key_info['text'] = key_info['default_text']
+                # 保存设置
+                if hasattr(self, 'game') and hasattr(self.game, 'save_settings'):
+                    self.game.save_settings()
+                
     def handle_statistics_click(self, pos):
         """处理统计界面点击"""
         # 计算窗口位置和尺寸
@@ -2185,6 +2249,16 @@ class UIManager:
         # 将窗口绘制到屏幕上
         screen.blit(window_surf, (window_x, window_y))
 
+    def show_error_popup(self, message):
+        """显示错误提示弹窗
+        
+        Args:
+            message: 错误提示消息内容
+        """
+        self.error_popup_active = True
+        self.error_popup_message = message
+        Utils.play_sound(self.game.snd_ui_click, self.game)
+    
     def handle_key_bind_input(self, key):
         """处理按键绑定输入"""
         if self.input_active and self.active_key_binding:
@@ -2199,6 +2273,75 @@ class UIManager:
                 self.game.save_settings()
             return True
         return False
+    
+    def draw_error_popup(self, screen, dt):
+        """绘制错误提示弹窗"""
+        # 弹窗尺寸
+        pw = int(SCREEN_W * 0.6)
+        ph = 200
+        px = (SCREEN_W - pw) // 2
+        py = int(SCREEN_H * 0.18)
+
+        # 创建弹窗表面
+        popup_surf = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        popup_color = (80, 80, 80)
+        popup_alpha = 240
+        popup_surf.fill((0, 0, 0, 0))
+        pygame.draw.rect(popup_surf, popup_color + (popup_alpha,), (0, 0, pw, ph), border_radius=14)
+
+        # 标题文本
+        title_font = Utils.load_font(FONT_CANDIDATES, 26, bold=True)
+        title_str = '错误提示'
+        title_s = title_font.render(title_str, True, COLOR_WHITE)
+        popup_surf.blit(title_s, (pw // 2 - title_s.get_width() // 2, 18))
+        
+        # 绘制右上角红色关闭按钮
+        close_button_size = 30
+        close_button_radius = 15
+        close_button_x = pw - close_button_size - 15
+        close_button_y = 15
+        
+        # 保存关闭按钮位置信息（用于点击检测）
+        self._error_close_button_rect = pygame.Rect(close_button_x + px, close_button_y + py, close_button_size, close_button_size)
+        
+        # 绘制关闭按钮背景
+        pygame.draw.circle(popup_surf, (220, 50, 50, popup_alpha), 
+                          (close_button_x + close_button_radius, close_button_y + close_button_radius), 
+                          close_button_radius)
+        
+        # 绘制关闭按钮的×符号
+        close_font = Utils.load_font(FONT_CANDIDATES, 24, bold=True)
+        close_text = close_font.render('×', True, COLOR_WHITE)
+        close_text_x = close_button_x + close_button_size // 2 - close_text.get_width() // 2
+        close_text_y = close_button_y + close_button_size // 2 - close_text.get_height() // 2
+        popup_surf.blit(close_text, (close_text_x, close_text_y))
+
+        # 绘制错误消息
+        message_font = Utils.load_font(FONT_CANDIDATES, 18)
+        # 简单的文本换行处理
+        wrapped_lines = []
+        words = self.error_popup_message.split(' ')
+        current_line = ''
+        for word in words:
+            test_line = current_line + word + ' '
+            text_width = message_font.size(test_line)[0]
+            if text_width < pw - 40:
+                current_line = test_line
+            else:
+                wrapped_lines.append(current_line)
+                current_line = word + ' '
+        if current_line:
+            wrapped_lines.append(current_line)
+        
+        # 绘制文本行
+        message_y = 60
+        for line in wrapped_lines:
+            text_surf = message_font.render(line, True, (255, 255, 255))
+            popup_surf.blit(text_surf, (20, message_y))
+            message_y += 25
+
+        # 将弹窗绘制到屏幕
+        screen.blit(popup_surf, (px, py))
     
     def update_animations(self, dt):
         """更新UI动画"""
@@ -2586,21 +2729,27 @@ class CollisionManager:
                 events_to_remove.append(event)
                 
                 # 触发随机事件效果
-                event_type = event.event_type
+                available_events = [EVENT_TECH_DEVELOP, EVENT_ECONOMY_DEVELOP, EVENT_AIR_SUPPORT, EVENT_HURRICANE]
+                if self.game.stage >= 3:
+                    if self.game.hack_attack_times < 2:
+                        available_events.append(EVENT_HACK_ATTACK)
+                
+                event_type = random.choice(available_events)
+                
                 # 根据事件类型触发相应效果
-                if event_type == 1:
+                if event_type == EVENT_TECH_DEVELOP:
                     # 科技发展
                     self._trigger_tech_develop()
-                elif event_type == 2:
+                elif event_type == EVENT_ECONOMY_DEVELOP:
                     # 经济发展
                     self._trigger_economy_develop()
-                elif event_type == 3:
+                elif event_type == EVENT_HACK_ATTACK:
                     # 黑客入侵
                     self._trigger_hack_attack()
-                elif event_type == 4:
+                elif event_type == EVENT_AIR_SUPPORT:
                     # 空中支援
                     self._trigger_air_support()
-                elif event_type == 5:
+                elif event_type == EVENT_HURRICANE:
                     # 飓风袭击
                     self._trigger_hurricane()
         
@@ -2700,21 +2849,11 @@ class CollisionManager:
         # 设置标志
         self.game.hurricane_active = True
         
-        # 显示飓风提示
-        self.game.floating_texts.append(FloatingText(
-            SCREEN_W // 2 - 120,
-            SCREEN_H // 4,
-            '飓风来袭！敌人移动加速并改变方向',
-            (255, 165, 0),  # 橙色
-            duration=2.5,
-            rise_speed=30
-        ))
-        
         # 立即对所有敌人应用飓风效果
         for enemy in self.game.enemies:
             # 增加速度50%
-            enemy.vx = enemy.original_vx * 1.5
-            enemy.vy = enemy.original_vy * 1.5
+            enemy.vx = enemy.vx * 1.5
+            enemy.vy = enemy.vy * 1.5
             
             # 随机改变方向
             if random.random() > 0.5:
@@ -2761,7 +2900,7 @@ class Game:
         self.bg_scroll_speed = 5.0  # 每秒向下滚动的像素数
         
         # 数据存储路径
-        self.data_dir = os.path.join('data')
+        self.data_dir = os.path.join('plane_war_data')
         self.settings_file = os.path.join(self.data_dir, 'settings.json')
         self.stats_file = os.path.join(self.data_dir, 'statistics.json')
         
@@ -2783,7 +2922,7 @@ class Game:
         self.economy_develop = False  # 经济发展状态
         self.hack_attack = False  # 黑客入侵状态
         self.hack_attack_times = 0
-        self.hurricane_active = False  # 飓风袭击状态
+        self.hurricane_active = True  # 飓风袭击状态
         self.hurricane_speed_multiplier = 0.5  # 飓风速度乘数（减慢50%）
         
         # 当前关卡
@@ -2812,8 +2951,20 @@ class Game:
         self.reset()
     
     def _load_settings(self):
-        """加载游戏设置"""
+        """加载游戏设置，处理异常情况"""
         settings = Utils.load_data(self.settings_file)
+        
+        # 处理特殊错误返回值
+        if settings == "JSON_ERROR":
+            # 通知需要删除并重新生成设置文件
+            self.handle_corrupted_file(self.settings_file, 'settings')
+            return
+        elif settings == "PERMISSION_ERROR":
+            # 显示权限错误弹窗
+            if hasattr(self.ui_manager, 'show_error_popup'):
+                self.ui_manager.show_error_popup("无法访问设置文件，可能是权限问题。")
+            return
+        
         if settings:
     
             if 'sfx_volume' in settings:
@@ -2846,10 +2997,42 @@ class Game:
                             self.ui_manager.key_bindings[action]['key'] = key_info['key']
                         if 'text' in key_info:
                             self.ui_manager.key_bindings[action]['text'] = key_info['text']
+            
+            # 加载难度设置
+            if 'difficulty' in settings and isinstance(settings['difficulty'], dict):
+                difficulty_data = settings['difficulty']
+                # 检查难度索引是否有效
+                difficulty_levels = getattr(self.ui_manager, 'difficulty_levels', ["简易", "中等", "困难"])
+                if 'index' in difficulty_data and isinstance(difficulty_data['index'], int):
+                    # 确保索引在有效范围内
+                    if 0 <= difficulty_data['index'] < len(difficulty_levels):
+                        self.ui_manager.current_difficulty_index = difficulty_data['index']
     
     def _init_statistics(self):
-        """初始化游戏统计数据"""
+        """初始化游戏统计数据，处理异常情况"""
         stats = Utils.load_data(self.stats_file)
+        
+        # 处理特殊错误返回值
+        if stats == "JSON_ERROR":
+            # 通知需要删除并重新生成统计文件
+            self.handle_corrupted_file(self.stats_file, 'statistics')
+            return
+        elif stats == "PERMISSION_ERROR":
+            # 显示权限错误弹窗
+            if hasattr(self.ui_manager, 'show_error_popup'):
+                self.ui_manager.show_error_popup("无法访问统计文件，可能是权限问题。")
+            # 使用默认统计数据
+            self.statistics = {
+                'highest_score': 0,
+                'longest_game_time': 0.0,
+                'highest_enemies_killed': 0,
+                'highest_bullets_collided': 0,
+                'total_enemies_killed': 0,
+                'total_bullets_collided': 0,
+                'total_game_time': 0.0
+            }
+            return
+        
         if stats:
             self.statistics = stats
         else:
@@ -2882,16 +3065,72 @@ class Game:
                     'text': key_info.get('text', 'A')
                 }
         
+        # 获取难度设置数据
+        difficulty_levels = getattr(self.ui_manager, 'difficulty_levels', ["简易", "中等", "困难"])
+        current_difficulty_index = getattr(self.ui_manager, 'current_difficulty_index', 1)
+        current_difficulty = difficulty_levels[current_difficulty_index]
+        
         settings = {
             'sfx_volume': self.ui_manager.sfx_volume,
             'music_volume': self.ui_manager.music_volume,
-            'master_volume': self.ui_manager.master_volume  # 添加master_volume
+            'master_volume': self.ui_manager.master_volume,  # 添加master_volume
+            'difficulty': {
+                'level': current_difficulty,
+                'index': current_difficulty_index
+            }
         }
         # 如果key_bindings_data不为空，则添加到设置中
         if key_bindings_data:
             settings['key_bindings'] = key_bindings_data
         
         Utils.save_data(settings, self.settings_file)
+    
+    def handle_corrupted_file(self, file_path, file_type):
+        """处理损坏的JSON文件：尝试删除并重新生成"""
+        Utils.debug(f"尝试处理损坏的文件: {file_path}")
+        
+        try:
+            # 尝试删除损坏的文件
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                Utils.debug(f"成功删除损坏的文件: {file_path}")
+                
+                # 重新生成默认文件
+                if file_type == 'settings':
+                    # 重新生成设置文件（使用默认值）
+                    self.save_settings()
+                    Utils.debug("重新生成了默认设置文件")
+                elif file_type == 'statistics':
+                    # 重新生成统计文件
+                    self.statistics = {
+                        'highest_score': 0,
+                        'longest_game_time': 0.0,
+                        'highest_enemies_killed': 0,
+                        'highest_bullets_collided': 0,
+                        'total_enemies_killed': 0,
+                        'total_bullets_collided': 0,
+                        'total_game_time': 0.0
+                    }
+                    self.save_statistics()
+                    Utils.debug("重新生成了默认统计文件")
+                
+                # 显示成功提示
+                self.ui_manager.show_error_popup(
+                    f"检测到{file_type}文件损坏，已自动修复并恢复为默认设置。"
+                )
+                    
+        except PermissionError:
+            Utils.debug(f"删除文件时权限不足: {file_path}")
+            # 显示权限错误弹窗
+            self.ui_manager.show_error_popup(
+                f"无法删除损坏的{file_type}文件，可能是权限问题。请手动删除文件后重新启动游戏。"
+            )
+        except Exception as e:
+            Utils.debug(f"处理损坏文件时出错: {e}")
+            # 显示通用错误弹窗
+            self.ui_manager.show_error_popup(
+                f"修复{file_type}文件时出现错误: {str(e)}"
+            )
     
     def save_statistics(self):
         """保存游戏统计数据"""
@@ -3126,13 +3365,11 @@ class Game:
         field_has_scatter = False
         
         # 检查玩家状态
-        if self.player and self.allow_switch_shoot_type:
-
-            if not self.allow_switch_shoot_type:
-                if self.player.current_shoot_type == SHOOT_TYPE_RAPID:
-                    player_has_rapid_boost = True
-                elif self.player.current_shoot_type == SHOOT_TYPE_SCATTER:
-                    player_has_scatter_boost = True
+        if self.player and not self.allow_switch_shoot_type:
+            if self.player.current_shoot_type == SHOOT_TYPE_RAPID:
+                player_has_rapid_boost = True
+            elif self.player.current_shoot_type == SHOOT_TYPE_SCATTER:
+                player_has_scatter_boost = True
         
         # 检查场上已存在的道具
         for powerup in self.powerups:
@@ -3190,11 +3427,20 @@ class Game:
         for stage, images in base_stage_images.items():
             stage_images[stage] = [img.copy() for img in images]
 
-        # todo: 难度系数
-        # 简易: 3.0 2.0 2.0 2.0
-        # 中等（默认）: 2.0 1.8 1.6 1.5
-        # 困难: 2.0 1.6 1.5 1.2
-        interval_map = {1: 2.0, 2: 1.8, 3: 1.6, 4: 1.5}
+        # 根据难度设置加载对应的间隔系数
+        difficulty_interval_maps = {
+            "简易": {1: 3.0, 2: 2.0, 3: 2.0, 4: 2.0},      # 简易难度：生成间隔更大
+            "中等": {1: 2.0, 2: 1.8, 3: 1.6, 4: 1.5},      # 中等难度（默认）
+            "困难": {1: 2.0, 2: 1.6, 3: 1.5, 4: 1.2}       # 困难难度：生成间隔更小
+        }
+        
+        # 从UIManager获取当前难度设置，如果不存在则使用中等难度作为默认值
+        current_difficulty_index = getattr(self.ui_manager, 'current_difficulty_index', 1)
+        difficulty_levels = getattr(self.ui_manager, 'difficulty_levels', ["简易", "中等", "困难"])
+        current_difficulty = difficulty_levels[current_difficulty_index]
+        
+        # 获取对应难度的间隔系数映射
+        interval_map = difficulty_interval_maps.get(current_difficulty, difficulty_interval_maps["中等"])
         base_interval = interval_map.get(self.stage, 2.0)
         
         # 处理经济发展事件效果 - 降低生成间隔
@@ -3393,28 +3639,6 @@ class Game:
                         self.random_events.append(RandomEvent(x, y))
                         self.random_event_timer = self.random_event_interval  # 重置计时器
             
-            if self.allow_switch_shoot_type:
-        
-                if self.stage <= 2:
-                    # stage 1-2: 只能直射
-                    # 保存原始射击方式，用于stage提升后恢复
-                    self.player.saved_shoot_type = self.player.current_shoot_type
-                    self.player.current_shoot_type = SHOOT_TYPE_DIRECT
-                elif self.stage == 3 or self.stage == 4:
-                    # stage 3-4: 恢复保存的射击类型
-                    # 根据当前stage确定可用的射击类型
-                    allowed_types = [SHOOT_TYPE_DIRECT, SHOOT_TYPE_SCATTER]
-                    if self.stage == 4:
-                        allowed_types.append(SHOOT_TYPE_RAPID)
-                    
-                    # 检查saved_shoot_type是否有效（避免hasattr）
-                    if getattr(self.player, 'saved_shoot_type', None) in allowed_types:
-                        self.player.current_shoot_type = self.player.saved_shoot_type
-                    else:
-                        self.player.current_shoot_type = SHOOT_TYPE_DIRECT  # 默认直射
-                    
-                    # 重置保存的射击类型而不是删除属性
-                    self.player.saved_shoot_type = None
             
             # 动态调整按键重复频率
             # 当游戏开始且按下的是移动键时，使用较快的重复频率
@@ -3489,41 +3713,24 @@ class Game:
                 self._spawn_highest_level_enemy()
             
             Utils.debug(f"stage: {self.stage} - killed: {self.current_game_stats['enemies_killed']}")
-            # todo: 当stage切换时，使用notice与玩家交互
             # 阶段切换逻辑
             if self.stage == 1 and self.current_game_stats['enemies_killed'] >= 30:
                 self.stage = 2
                 self.spawn_interval = 1.5  
                 # 显示阶段提升信息
-                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 2', COLOR_GOLD, duration=2.0, rise_speed=20))
+                self.notice(2.0, f"你已进入第{self.stage}阶段")
             elif self.stage == 2 and self.current_game_stats['enemies_killed'] >= 120:
                 self.stage = 3
                 self.spawn_interval = 1.2
-                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 3', COLOR_GOLD, duration=2.0, rise_speed=20))
-                # 添加蓝色浮动文字提示已解锁散射模式
-                if self.player:
-                    self.floating_texts.append(FloatingText(
-                        self.player.x + self.player.w // 2,
-                        self.player.y - 30,
-                        '已解锁射击模式: 散射',
-                        (135, 206, 250),  # 天蓝色
-                        duration=2.0,
-                        rise_speed=40
-                    ))
+                # 显示阶段提升信息
+                self.notice(2.0, f"你已进入第{self.stage}阶段")
+                self.notice(2.0, "已解锁射击模式: 散射")
             elif self.stage == 3 and self.current_game_stats['enemies_killed'] >= 300:
                 self.stage = 4
                 self.spawn_interval = 1.0
-                self.floating_texts.append(FloatingText(SCREEN_W // 2 - 50, SCREEN_H // 2, '阶段 4', COLOR_GOLD, duration=2.0, rise_speed=20))
-                # 添加蓝色浮动文字提示已解锁连射模式
-                if self.player:
-                    self.floating_texts.append(FloatingText(
-                        self.player.x + self.player.w // 2,
-                        self.player.y - 30,
-                        '已解锁射击模式: 连射',
-                        (135, 206, 250),  # 天蓝色
-                        duration=2.0,
-                        rise_speed=40
-                    ))
+                # 使用notice显示阶段提升信息
+                self.notice(2.0, f"你已进入第{self.stage}阶段")
+                self.notice(2.0, "已解锁射击模式: 连射")
 
     def draw(self):
         """绘制游戏画面"""
@@ -3568,6 +3775,10 @@ class Game:
         # 绘制模态弹窗
         if self.ui_manager.modal_active:
             self.ui_manager.draw_modal(self.screen, 0)  # dt在run方法中更新
+        
+        # 绘制错误弹窗（优先级高于模态弹窗）
+        if self.ui_manager.error_popup_active:
+            self.ui_manager.draw_error_popup(self.screen, 0)  # dt在run方法中更新
 
         # 绘制游戏结束画面
         if self.state == GAME_STATE_GAMEOVER:
@@ -3794,6 +4005,7 @@ class Game:
             # 取消按键绑定
             if self.ui_manager.active_key_binding:
                 self.ui_manager.active_key_binding = None
+                self.ui_manager.input_active = False
                 return True
             # 优先处理输入栏的ESC键
             if self.ui_manager.number_input_active:
@@ -3813,14 +4025,19 @@ class Game:
                 self.paused = False
                 Utils.play_sound(self.snd_ui_click, self)
                 return True
-    
+
             if self.ui_manager.settings_active:
-        
                 self.ui_manager.settings_active = False
                 Utils.play_sound(self.snd_ui_click, self)
                 return True
+            # 错误弹窗处理优先级最高
+            if self.ui_manager.error_popup_active:
+                # 如果错误弹窗正在显示，则关闭它
+                self.ui_manager.error_popup_active = False
+                Utils.play_sound(self.snd_ui_click, self)
+                return True
             # 弹窗处理优先级高于状态处理
-            if self.ui_manager.modal_active:
+            elif self.ui_manager.modal_active:
                 # 如果正在弹窗，则关闭弹窗
                 self.ui_manager.modal_active = False
                 Utils.play_sound(self.snd_ui_click, self)
@@ -4026,6 +4243,12 @@ class Game:
                 elif self.ui_manager._popup_continue_rect.collidepoint(pos):
                     Utils.play_sound(self.snd_ui_click)
                     self.ui_manager.modal_active = False
+            
+            # 处理错误弹窗关闭按钮点击
+            if self.ui_manager.error_popup_active and hasattr(self.ui_manager, '_error_close_button_rect'):
+                if self.ui_manager._error_close_button_rect.collidepoint(pos):
+                    Utils.play_sound(self.snd_ui_click)
+                    self.ui_manager.error_popup_active = False
         
         # 数字输入确认/取消按钮
         if self.ui_manager.number_input_active:
@@ -4266,10 +4489,6 @@ class Game:
 
 def main():
     Utils.debug("开始游戏启动...")
-    # 确保窗口居中
-    os.environ["SDL_VIDEO_CENTERED"] = "1"
-    Utils.debug("环境变量设置完成")
-
     Utils.debug("初始化PyGame...")
     pygame.init()
     Utils.debug("PyGame核心模块初始化完成")
