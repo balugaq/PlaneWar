@@ -2,10 +2,12 @@ import json
 import math
 import os
 import random
-import sys
-import time
-import traceback
-import uuid
+
+from sys import exit
+from time import time
+from traceback import print_exc
+from typing import *
+from uuid import uuid4
 
 # 禁用libpng警告和pygame支持提示
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
@@ -22,45 +24,46 @@ except Exception:
 
 class Task:
     """定时器任务类"""
-    def __init__(self, func, period_ms):
-        self.func = func  # 要执行的函数
-        self.period_ms = period_ms  # 执行周期（毫秒）
-        self.last_run_time = time.time() * 1000  # 上次执行时间（毫秒）
-        self.is_cancelled = False  # 任务是否被取消
+    def __init__(self, func: Callable[[], None], period_ms: float):
+        self.func: Callable[[], None] = func  # 要执行的函数
+        self.period_ms: float = period_ms  # 执行周期（毫秒）
+        self.last_run_time: float = time() * 1000  # 上次执行时间（毫秒）
+        self.is_cancelled: bool = False  # 任务是否被取消
         
-    def cancel(self):
+    def cancel(self) -> None:
         """取消任务"""
         self.is_cancelled = True
         
-    def should_run(self):
+    def should_run(self) -> bool:
         """检查任务是否应该执行"""
         if self.is_cancelled:
             return False
-        current_time = time.time() * 1000
+        current_time = time() * 1000
         return current_time - self.last_run_time >= self.period_ms
     
-    def run(self):
+    def run(self) -> None:
         """执行任务并更新最后执行时间"""
         if not self.is_cancelled:
             try:
                 self.func()
             except Exception as e:
                 Utils.debug(f"Task error: {e}")
-            self.last_run_time = time.time() * 1000
+            self.last_run_time = time() * 1000
+
 class TaskScheduler:
     """任务调度器类，用于管理所有定时器任务"""
     def __init__(self):
-        self.tasks = []  # 存储所有活跃任务
+        self.tasks: List[Task] = []  # 存储所有活跃任务
         
-    def add_task(self, task):
+    def add_task(self, task: Task) -> Task:
         """添加一个任务到调度器"""
         self.tasks.append(task)
         return task
     
-    def update(self):
+    def update(self) -> None:
         """更新并执行到期的任务，清理已取消的任务"""
         # 创建一个新列表存储活跃任务
-        active_tasks = []
+        active_tasks: List[Task] = []
         
         for task in self.tasks:
             # 检查任务是否已取消
@@ -78,14 +81,14 @@ class TaskScheduler:
         # 更新任务列表，只保留活跃任务
         self.tasks = active_tasks
     
-    def clear(self):
+    def clear(self) -> None:
         """清除所有任务"""
         self.tasks.clear()
 
 # 创建全局任务调度器实例
 global_task_scheduler = TaskScheduler()
 
-def runTaskLater(func, delayMs):
+def runTaskLater(func: Callable[[], None], delayMs: float) -> Task:
     """全局函数，创建并启动一个延迟执行一次的任务
     
     Args:
@@ -99,7 +102,7 @@ def runTaskLater(func, delayMs):
         raise ValueError("任务函数不能为空")
     
     # 创建一个简单的包装函数
-    def one_time_func():
+    def one_time_func() -> None:
         func()
         # 获取当前任务并取消
         for t in global_task_scheduler.tasks:
@@ -108,11 +111,11 @@ def runTaskLater(func, delayMs):
                 break
     
     # 创建任务对象
-    task = Task(one_time_func, delayMs)
+    task: Task = Task(one_time_func, delayMs)
     # 添加到调度器
     return global_task_scheduler.add_task(task)
 
-def runTaskTimer(func, delayMs=0, periodMs=10):
+def runTaskTimer(func: Callable[[], None], delayMs: float = 0, periodMs: float = 10) -> Task:
     """全局函数，创建并启动一个定时任务
     
     Args:
@@ -129,17 +132,17 @@ def runTaskTimer(func, delayMs=0, periodMs=10):
     # 简单实现：如果有延迟，先创建一个延迟任务
     if delayMs > 0:
         # 创建一个包装函数用于启动周期性任务
-        def start_periodic():
+        def start_periodic() -> None:
             # 创建并添加周期性任务
-            periodic_task = Task(func, periodMs)
+            periodic_task: Task = Task(func, periodMs)
             global_task_scheduler.add_task(periodic_task)
         
         # 创建延迟任务
-        delay_task = Task(start_periodic, delayMs)
+        delay_task: Task = Task(start_periodic, delayMs)
         return global_task_scheduler.add_task(delay_task)
     else:
         # 没有延迟，直接创建周期任务
-        task = Task(func, periodMs)
+        task: Task = Task(func, periodMs)
         return global_task_scheduler.add_task(task)
 
 _VERSION = "1.0.0"
@@ -272,25 +275,25 @@ class Utils:
     """游戏工具函数集合"""
     
     @staticmethod
-    def error(*args, **kwargs):
+    def error(*args: Any, **kwargs: Any) -> None:
         """错误打印函数"""
         print(*args, **kwargs)
     
     @staticmethod
-    def debug(*args, **kwargs):
+    def debug(*args: Any, **kwargs: Any) -> None:
         """调试打印函数，仅当global_debug为True时打印"""
         if global_debug:
             print(*args, **kwargs)
     
     @staticmethod
-    def make_pixel_sprite(w, h, color, scale=3):
+    def make_pixel_sprite(w: int, h: int, color: Tuple[int, int, int], scale: int = 3) -> pygame.Surface:
         """生成一个像素风格的 Surface：先创建小尺寸再放大保持像素感"""
         surf = pygame.Surface((w, h), pygame.SRCALPHA)
         surf.fill(color)
         return pygame.transform.scale(surf, (w * scale, h * scale))
     
     @staticmethod
-    def load_image(name, target_size=None):
+    def load_image(name: str, target_size: Optional[Tuple[int, int]] = None) -> pygame.Surface:
         """尝试从 assets/images/ 加载名为 name 的 png（无需后缀），并缩放到 target_size"""
         path = os.path.join(ASSETS_IMG, f"{name}.png")
         try:
@@ -316,7 +319,7 @@ class Utils:
             return surf
     
     @staticmethod
-    def load_sound(name):
+    def load_sound(name: str) -> Optional[pygame.mixer.Sound]:
         """加载音效文件"""
         path = os.path.join(ASSETS_SFX, f"{name}.wav")
         try:
@@ -325,7 +328,7 @@ class Utils:
             return None
     
     @staticmethod
-    def load_font(candidates, size, bold=False):
+    def load_font(candidates: Union[str, List[str]], size: int, bold: bool = False) -> pygame.font.Font:
         """尝试从 assets/fonts/ 或系统字体加载支持中文的字体"""
         if isinstance(candidates, str):
             candidates = [candidates]
@@ -360,7 +363,7 @@ class Utils:
             return pygame.font.SysFont(None, size)
     
     @staticmethod
-    def play_sound(sound, game=None):
+    def play_sound(sound: Optional[pygame.mixer.Sound], game: Optional[Any] = None) -> None:
         """安全地播放音效，支持音量设置"""
         if sound:
             try:
@@ -375,7 +378,7 @@ class Utils:
                 pass
     
     @staticmethod
-    def draw_blurred_background(screen, alpha=200):
+    def draw_blurred_background(screen: pygame.Surface, alpha: int = 200) -> None:
         """创建并绘制模糊背景"""
         try:
             snap = screen.copy()
@@ -390,7 +393,7 @@ class Utils:
             screen.blit(overlay, (0, 0))
     
     @staticmethod
-    def save_data(data, file_path):
+    def save_data(data: Dict[str, Any], file_path: str) -> None:
         """保存数据到JSON文件"""
         try:
             # 确保目录存在
@@ -2573,7 +2576,7 @@ class CollisionManager:
         damage = 200 if crash else 100
         self.game.player.health -= damage
 
-        current_time = time.time()
+        current_time = time()
         self.game.player.last_hit_time = current_time
         
         # 如果玩家有斗志值，重置斗志值和连续击杀计数
@@ -2870,73 +2873,72 @@ class Game:
     """游戏主类"""
             
     def __init__(self):
-
+        """初始化游戏主类"""
         global global_debug
         global_debug = False
         
-        self.screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+        self.screen: pygame.Surface = pygame.display.set_mode((SCREEN_W, SCREEN_H))
         pygame.display.set_caption('飞机大战 - balugaq')
-        self.clock = pygame.time.Clock()
+        self.clock: pygame.time.Clock = pygame.time.Clock()
 
         self._load_resources()
 
-        self.ui_manager = UIManager(self)
-        self.collision_manager = CollisionManager(self)
+        self.ui_manager: UIManager = UIManager(self)
+        self.collision_manager: CollisionManager = CollisionManager(self)
         
         # 窗口焦点控制
-        self.has_focus = True
-        self.paused = False
+        self.has_focus: bool = True
+        self.paused: bool = False
         
         # M 键去抖：记录上次切换时间，单位为秒，仅对 M 键生效
-        self.m_cooldown = 0.35
-        self.last_m_toggle = 0.0
+        self.m_cooldown: float = 0.35
+        self.last_m_toggle: float = 0.0
         
         # R 键（用于 Game Over 立即重玩）去抖
-        self.r_cooldown = 1
-        self.last_r_restart = 0.0
+        self.r_cooldown: int = 1
+        self.last_r_restart: float = 0.0
         
         # 背景滚动控制
-        self.bg_scroll = 0.0  # 背景滚动偏移量（像素）
-        self.bg_scroll_speed = 5.0  # 每秒向下滚动的像素数
+        self.bg_scroll: float = 0.0  # 背景滚动偏移量（像素）
+        self.bg_scroll_speed: float = 5.0  # 每秒向下滚动的像素数
         
         # 数据存储路径
-        self.data_dir = os.path.join('plane_war_data')
-        self.settings_file = os.path.join(self.data_dir, 'settings.json')
-        self.stats_file = os.path.join(self.data_dir, 'statistics.json')
+        self.data_dir: str = os.path.join('plane_war_data')
+        self.settings_file: str = os.path.join(self.data_dir, 'settings.json')
+        self.stats_file: str = os.path.join(self.data_dir, 'statistics.json')
         
-        self.bullets_piercing = False
+        self.bullets_piercing: bool = False
 
         self._load_settings()
 
         self._init_statistics()
 
-        self.allow_switch_shoot_type = True
+        self.allow_switch_shoot_type: bool = True
         
         # 随机事件相关属性
-        self.random_events = []  # 存储所有随机事件实体
-        self.random_event_timer = 0.0  # 随机事件生成计时器
-        self.random_event_interval = 50.0  # 随机事件生成间隔（秒）
+        self.random_events: List[Any] = []  # 存储所有随机事件实体
+        self.random_event_timer: float = 0.0  # 随机事件生成计时器
+        self.random_event_interval: float = 50.0  # 随机事件生成间隔（秒）
         
         # 事件状态标志
-        self.tech_develop = False  # 科技发展状态
-        self.economy_develop = False  # 经济发展状态
-        self.hack_attack = False  # 黑客入侵状态
-        self.hack_attack_times = 0
-        self.hurricane_active = True  # 飓风袭击状态
-        self.hurricane_speed_multiplier = 0.5  # 飓风速度乘数（减慢50%）
+        self.tech_develop: bool = False  # 科技发展状态
+        self.economy_develop: bool = False  # 经济发展状态
+        self.hack_attack: bool = False  # 黑客入侵状态
+        self.hack_attack_times: int = 0
+        self.hurricane_active: bool = False  # 飓风袭击状态
         
         # 当前关卡
-        self.stage = 1
+        self.stage: int = 1
         
         # 小道具相关属性
-        self.powerups = []  # 小道具列表
-        self.powerup_spawn_timer = 0.0  # 小道具生成计时器
-        self.powerup_spawn_interval = 40.0  # 小道具生成间隔（秒）
-        self.max_powerups = 2  # 最大小道具数量
-        self.powerup_tasks = []  # 小道具定时器任务列表
+        self.powerups: List[Any] = []  # 小道具列表
+        self.powerup_spawn_timer: float = 0.0  # 小道具生成计时器
+        self.powerup_spawn_interval: float = 40.0  # 小道具生成间隔（秒）
+        self.max_powerups: int = 2  # 最大小道具数量
+        self.powerup_tasks: List[Task] = []  # 小道具定时器任务列表
         
         # 单次游戏统计数据
-        self.current_game_stats = {
+        self.current_game_stats: Dict[str, Union[int, float, None]] = {
             'score': 0,
             'game_time': 0.0,
             'enemies_killed': 0,
@@ -2944,8 +2946,8 @@ class Game:
             'start_time': None
         }
         
-        self.allow_switch_shoot_type = True
-        self.score = 0
+        self.allow_switch_shoot_type: bool = True
+        self.score: int = 0
         
         # 重置游戏状态
         self.reset()
@@ -3239,7 +3241,7 @@ class Game:
         except Exception:
             self.music_loaded = False
     
-    def reset(self):
+    def reset(self) -> None:
         """重置游戏状态"""
         self.update_statistics()
         
@@ -3249,32 +3251,32 @@ class Game:
         # 取消之前的定时任务（如果存在）
         if hasattr(self, 'rapid_shot_counter_task') and self.rapid_shot_counter_task:  # 保留此检查，因为任务可能不存在
             self.rapid_shot_counter_task.cancel()
-            self.rapid_shot_counter_task = None
+            self.rapid_shot_counter_task: Optional[Task] = None
 
-        self.player = Player(SCREEN_W // 2 - 18, SCREEN_H - 150, self.player_img)
+        self.player: Player = Player(SCREEN_W // 2 - 18, SCREEN_H - 150, self.player_img)
 
         self.player.morale = 0
         self.player.consecutive_kills = 0
         self.player.last_hit_time = -1
 
-        self.bullets = []
-        self.enemies = []
-        self.explosions = []
-        self.floating_texts = []
-        self.powerups = []  # 重置小道具列表
+        self.bullets: List[Bullet] = []
+        self.enemies: List[Enemy] = []
+        self.explosions: List[Explosion] = []
+        self.floating_texts: List[FloatingText] = []
+        self.powerups: List[Any] = []  # 重置小道具列表
         
         # 游戏状态
-        self.spawn_timer = 0.0
-        self.spawn_interval = 2
-        self.powerup_spawn_timer = 0.0  # 重置小道具生成计时器
-        self.score = 0
-        self.state = GAME_STATE_TITLE  # title / playing / gameover
+        self.spawn_timer: float = 0.0
+        self.spawn_interval: int = 2
+        self.powerup_spawn_timer: float = 0.0  # 重置小道具生成计时器
+        self.score: int = 0
+        self.state: str = GAME_STATE_TITLE  # title / playing / gameover
         # 记录进入的时间
-        self.state_enter_time = time.time()
-        self.stage = 1  # 游戏阶段，1-4
+        self.state_enter_time: float = time()
+        self.stage: int = 1  # 游戏阶段，1-4
         # 按键冷却时间配置
-        self.playing_r_cooldown = 2.0  # 游戏状态R键冷却时间（秒）
-        self.title_esc_cooldown = 2.0  # 主界面ESC键冷却时间（秒）
+        self.playing_r_cooldown: float = 2.0  # 游戏状态R键冷却时间（秒）
+        self.title_esc_cooldown: float = 2.0  # 主界面ESC键冷却时间（秒）
 
         # 模态窗口重置
         self.ui_manager.modal_active = False
@@ -3282,14 +3284,14 @@ class Game:
         self.ui_manager.modal_type = None
         
         # 开始游戏过渡动画
-        self.start_transition = False
-        self.transition_progress = 0.0
-        self.transition_speed = 2.0
+        self.start_transition: bool = False
+        self.transition_progress: float = 0.0
+        self.transition_speed: float = 2.0
 
-        self.paused = not self.has_focus
+        self.paused: bool = not self.has_focus
         
         # 单次游戏统计数据
-        self.current_game_stats = {
+        self.current_game_stats: Dict[str, Union[int, float, None]] = {
             'score': 0,
             'game_time': 0.0,
             'enemies_killed': 0,
@@ -3595,7 +3597,7 @@ class Game:
             
         return bullet
     
-    def update(self, dt):
+    def update(self, dt: float) -> None:
         """更新游戏逻辑"""
         for ex in self.explosions:
             ex.update(dt)
@@ -3618,7 +3620,7 @@ class Game:
         if self.state == GAME_STATE_PLAYING:
             # 统计游戏时长
             self.current_game_stats['game_time'] += dt / 60  # 转换为分钟
-            keys = pygame.key.get_pressed()
+            keys: List[bool] = pygame.key.get_pressed()
             # 随机事件生成逻辑
             if self.stage >= 2:
                 # 第一次进入stage>=2时立即生成一个随机事件
@@ -3890,7 +3892,7 @@ class Game:
                         self.transition_progress = 0.0
                         self.state = GAME_STATE_PLAYING
                         # 记录进入游戏状态的时间
-                        self.state_enter_time = time.time()
+                        self.state_enter_time = time()
                         
                         self.notice(3.0, "欢迎开始游戏！", "祝你好运！")
                         
@@ -3916,10 +3918,9 @@ class Game:
             self.update_statistics()
             pygame.quit()
         except Exception as e:
-            import traceback
             Utils.error(f"游戏运行出错: {e}")
             Utils.error("错误详情:")
-            traceback.print_exc()
+            print_exc()
             input("按Enter键退出...")
     
     def _handle_events(self, dt):
@@ -4045,7 +4046,7 @@ class Game:
             # 不同状态下的ESC键处理
             if self.state == GAME_STATE_TITLE:
                 # 检查主界面冷却时间 - 进入主界面前2秒ESC键无效
-                current_time = time.time()
+                current_time = time()
                 if current_time - self.state_enter_time >= self.title_esc_cooldown:
                     # 主界面按下ESC，弹出确认退出弹窗
                     self.ui_manager.modal_active = True
@@ -4064,7 +4065,7 @@ class Game:
                 self.reset()
                 self.state = GAME_STATE_TITLE
                 # 记录进入主界面的时间
-                self.state_enter_time = time.time()
+                self.state_enter_time = time()
                 Utils.play_sound(self.snd_ui_click, self)
             return True
         
@@ -4092,7 +4093,7 @@ class Game:
         # 切换背景音乐（使用自定义按键绑定）
         if event.key == self.ui_manager.key_bindings['music']['key']:
             # 添加计时器以防止频繁切换
-            current_time = time.time()
+            current_time = time()
             
             if current_time - self.last_m_toggle >= self.m_cooldown:
                 self.last_m_toggle = current_time
@@ -4105,7 +4106,7 @@ class Game:
         
         # 重玩键处理（使用自定义按键绑定）
         if event.key == self.ui_manager.key_bindings['restart']['key']:
-            current_time = time.time()
+            current_time = time()
             if self.state == GAME_STATE_GAMEOVER:
                 # 游戏结束时直接重玩
                 if current_time - self.last_r_restart >= self.r_cooldown:
@@ -4237,7 +4238,7 @@ class Game:
                         self.update_statistics()
                         # 退出游戏
                         pygame.quit()
-                        sys.exit(0)
+                        exit(0)
                     self.ui_manager.modal_active = False
                 
                 elif self.ui_manager._popup_continue_rect.collidepoint(pos):
@@ -4399,7 +4400,7 @@ class Game:
         total_chars = len(full_text)
         
         # 为每条通知生成唯一标识
-        notice_id = str(uuid.uuid4())[:8]  # 使用短uuid作为唯一标识
+        notice_id = str(uuid4())[:8]  # 使用短uuid作为唯一标识
         
         # 计算每个字符的显示间隔（毫秒）
         char_interval_ms = (within_seconds * 1000) / total_chars if total_chars > 0 else 100
@@ -4515,5 +4516,5 @@ if __name__ == '__main__':
     except Exception as e:
         Utils.error(f"游戏运行出错: {e}")
         Utils.error("错误详情:")
-        traceback.print_exc()
+        print_exc()
         input("按Enter键退出...")
